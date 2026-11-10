@@ -1,0 +1,27 @@
+{
+  "_comment": "The closed core vocabulary. Extraction and feeders may only use these types and predicates, plus those a feeder's own vocabulary file adds. Add here on purpose, never from extraction output.",
+  "types": {
+    "PERSON": "Someone: the user, a collaborator, an author of a tool or mod.",
+    "PROJECT": "A folder or repository being worked on.",
+    "TOOL": "A program, library, editor, service or command used in the work.",
+    "FILE": "A specific file or document.",
+    "CONCEPT": "An idea, technique or topic that is not a tool or a file.",
+    "DECISION": "A choice that was made, with its reason in the description.",
+    "PROBLEM": "A bug, crash, blocker or open question.",
+    "PREFERENCE": "How the user likes things done."
+  },
+  "predicates": {
+    "works_on": "PERSON works_on PROJECT",
+    "uses": "PROJECT or PERSON uses TOOL",
+    "part_of": "something is part_of a larger thing",
+    "depends_on": "something needs another thing to work",
+    "decided": "PROJECT or PERSON decided DECISION",
+    "because": "DECISION because PROBLEM, CONCEPT or PREFERENCE",
+    "blocked_by": "something is blocked_by PROBLEM",
+    "fixed_by": "PROBLEM fixed_by DECISION, TOOL or FILE",
+    "prefers": "PERSON prefers PREFERENCE",
+    "avoids": "PERSON or PROJECT avoids something",
+    "about": "FILE, DECISION or PROBLEM is about something",
+    "references": "FILE references another thing"
+  }
+}

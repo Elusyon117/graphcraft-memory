@@ -1,0 +1,23 @@
+{
+  "_comment": "Made-up example facts in the zonecraft shape. Not real user data.",
+  "nodes": [
+    {"name": "Campfires", "type": "MOD", "description": "Sit at campfires with friendly stalkers."},
+    {"name": "AnimBP_Player", "type": "ASSET", "description": "The player's anim blueprint; many mods override it."},
+    {"name": "Bedroll Mod", "type": "NEXUS_MOD"},
+    {"name": "Post-process reinit", "type": "CRASH_FAMILY", "description": "SetOverridePostProcessAnimBP with Reinit=true during play."},
+    {"name": "animation.md / Crash families", "type": "KNOWLEDGE_TOPIC"},
+    {"name": "Reinit swap on sit", "type": "DECISION", "description": "Build 3: swapped the post-process AnimBP when sitting."},
+    {"name": "Refund Policy", "type": "FILE", "description": "Decoy: unrelated document that also says 3."}
+  ],
+  "edges": [
+    {"source": "Campfires", "predicate": "overrides", "target": "AnimBP_Player"},
+    {"source": "Bedroll Mod", "predicate": "overrides", "target": "AnimBP_Player"},
+    {"source": "Campfires", "predicate": "crashed_with", "target": "Post-process reinit"},
+    {"source": "Post-process reinit", "predicate": "advice_in", "target": "animation.md / Crash families"},
+    {"source": "Campfires", "predicate": "tried", "target": "Reinit swap on sit"}
+  ],
+  "aliases": [
+    {"entity": "AnimBP_Player", "alias": "player animbp"},
+    {"entity": "Campfires", "alias": "ImmersiveCampfires"}
+  ]
+}

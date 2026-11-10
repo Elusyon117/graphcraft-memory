@@ -1,0 +1,17 @@
+{
+  "_comment": "A feeder-style vocabulary for tests, shaped like the zonecraft one in docs/DESIGN.md.",
+  "types": {
+    "MOD": "A Stalker 2 mod being made.",
+    "ASSET": "A game asset.",
+    "NEXUS_MOD": "Someone else's published mod.",
+    "CRASH_FAMILY": "A known crash pattern.",
+    "KNOWLEDGE_TOPIC": "A section of a knowledge file.",
+    "PROJECT": "redefinition attempt: must not replace the core description"
+  },
+  "predicates": {
+    "overrides": "MOD or NEXUS_MOD overrides ASSET",
+    "crashed_with": "MOD crashed_with CRASH_FAMILY",
+    "advice_in": "CRASH_FAMILY advice_in KNOWLEDGE_TOPIC",
+    "tried": "MOD tried something"
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "name": "elusyon-graphcraft-memory",
+  "description": "graphcraft-memory: knowledge-graph memory for Claude Code.",
+  "owner": { "name": "Elusyon117" },
+  "plugins": [{ "name": "graphcraft-memory", "source": "./" }]
+}
