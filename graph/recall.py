@@ -176,9 +176,11 @@ def main(argv=None) -> int:
 
     prompt, cwd = args.prompt, args.cwd
     if args.stdin:
-        data = json.loads(sys.stdin.buffer.read().decode("utf-8") or "{}")
+        data = json.loads(sys.stdin.buffer.read().decode("utf-8-sig") or "{}")
         prompt, cwd = data.get("prompt", ""), data.get("cwd", "")
     out = recall(prompt, cwd, args.hops)
+    out["db"] = str(store.db_path())  # so the hook's debug line says which graph was read
+    out["prompt_chars"] = len(prompt)  # and how much prompt text actually arrived
     print(json.dumps(out) if args.json else (out["context"] or "(no memory matches)"))
     return 0
 

@@ -23,7 +23,9 @@ graph more connected.
                          panel (later): what was injected, fix or forget a fact
 
 ### 1. Store
-One SQLite file per machine: `%LOCALAPPDATA%\graphcraft-memory\graph.db`. Standard library only.
+One SQLite file per machine: `~/.claude/graphcraft-memory/graph.db` (under `CLAUDE_CONFIG_DIR` when set). Not
+`%LOCALAPPDATA%`: Windows redirects a packaged app's AppData writes, so the Claude desktop app and a terminal Claude
+Code would each see a different graph. Standard library only.
 
     entities  (id, name, type, description, scope, created, updated)
     relations (source_id, target_id, predicate, origin, created, retired)

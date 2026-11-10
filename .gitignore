@@ -1,4 +1,4 @@
-# The graph is per machine and lives in %LOCALAPPDATA%\graphcraft-memory\, never in the repo.
+# The graph is per machine and lives in ~/.claude/graphcraft-memory/, never in the repo.
 *.db
 *.db-journal
 *.sqlite

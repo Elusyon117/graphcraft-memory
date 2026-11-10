@@ -5,6 +5,7 @@ import type { EngineInterface as Engine, Register } from 'claude-code'
 
 const CANDIDATES: readonly (readonly string[])[] = [['py', '-3'], ['python3'], ['python']]
 const RECALL_TIMEOUT_MS = 5000
+const MAX_PROMPT_CHARS = 8000
 
 // Found once per load; undefined = not looked yet, null = no Python 3 on this machine.
 let python: readonly string[] | null | undefined
@@ -33,15 +34,26 @@ export const register: Register = on => {
 
     const script = `${slash($.plugin.root)}/graph/recall.py`
     const cwd = await $.session.cwd()
-    const r = await $.process.run([...py, '-I', script, '--stdin', '--json'], {
-      stdin: JSON.stringify({ prompt: e.text, cwd }),
+    // The prompt goes as an argument, not stdin: in interactive sessions stdin arrived empty. Seeding only needs the
+    // words, so a long paste is cut to stay under Windows' command-line limit.
+    const prompt = e.text.slice(0, MAX_PROMPT_CHARS)
+    const r = await $.process.run([...py, '-I', script, '--json', '--cwd', cwd, '--', prompt], {
       timeoutMs: RECALL_TIMEOUT_MS,
     })
     if (r.exitCode !== 0) {
       $.ui.log(`graphcraft-memory: recall failed: ${r.stderr.slice(0, 300)}`, { to: 'debug' })
       return next(e)
     }
-    const out = JSON.parse(r.stdout) as { facts: number; summary: string; context: string }
+    const out = JSON.parse(r.stdout) as {
+      facts: number
+      summary: string
+      context: string
+      db: string
+      prompt_chars: number
+    }
+    $.ui.log(`graphcraft-memory: ${out.facts} facts from ${out.db} (prompt ${out.prompt_chars} chars)`, {
+      to: 'debug',
+    })
     $.ui.status(out.facts > 0 ? out.summary : undefined)
     if (out.facts === 0) return next(e)
     return next({ ...e, context: [...(e.context ?? []), out.context] })

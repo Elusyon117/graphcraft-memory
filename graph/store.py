@@ -6,7 +6,7 @@ r"""The graph store: one SQLite file per machine, upserts only.
     py -I store.py forget-origin ID                      remove everything one origin added
     py -I store.py stats                                 counts
 
-The database is %LOCALAPPDATA%\graphcraft-memory\graph.db, or GRAPHCRAFT_DB when set (tests use that).
+The database is ~/.claude/graphcraft-memory/graph.db (CLAUDE_CONFIG_DIR if set), or GRAPHCRAFT_DB when set (tests).
 
 A batch is the shape extraction and feeders produce:
     {"scope": "global" | "<project dir>",                (optional, default global)
@@ -53,7 +53,9 @@ CREATE INDEX IF NOT EXISTS relations_origin ON relations(origin_id);
 def db_path() -> Path:
     if os.environ.get("GRAPHCRAFT_DB"):
         return Path(os.environ["GRAPHCRAFT_DB"])
-    base = os.environ.get("LOCALAPPDATA") or os.path.join(os.path.expanduser("~"), ".local", "share")
+    # Not %LOCALAPPDATA%: Windows redirects a packaged app's AppData writes (the Claude desktop app is one), so the
+    # desktop app and a terminal Claude Code would each see a different graph. ~/.claude is shared by every install.
+    base = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(os.path.expanduser("~"), ".claude")
     return Path(base) / "graphcraft-memory" / "graph.db"
 
 

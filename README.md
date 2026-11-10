@@ -7,7 +7,8 @@ keeps what you work on as a graph of connected facts: things (projects, tools, f
 links between them. Before every prompt, code looks up the things you mentioned, follows their links a few steps and
 hands Claude the result. Claude never has to search for it.
 
-- **Install once per machine.** One graph for all your projects, stored in `%LOCALAPPDATA%\graphcraft-memory\`.
+- **Install once per machine.** One graph for all your projects, stored in `~/.claude/graphcraft-memory/`, which the desktop app and
+  terminal Claude Code share.
 - **Grows by itself.** At the end of each session the facts worth keeping are extracted and linked in.
 - **Mods plug in.** Other mods can feed it their own facts. With [zonecraft](https://github.com/Elusyon117/zonecraft)
   installed, its conflicts, crash families, knowledge and mod logs join the same graph.

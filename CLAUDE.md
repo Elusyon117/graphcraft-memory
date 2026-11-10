@@ -13,7 +13,8 @@ Read it before changing the schema, the vocabulary or the feeder contract.
 
 ## Rules
 1. **Recall is code, not a model.** Nothing in the prompt hook calls a model; it must stay fast (target < 50 ms).
-2. **User data never enters the repo.** The graph lives in `%LOCALAPPDATA%\graphcraft-memory\`.
+2. **User data never enters the repo.** The graph lives in `~/.claude/graphcraft-memory/`. Never under
+   `%LOCALAPPDATA%`: Windows redirects the desktop app's AppData, so it and a terminal session would split memory.
 3. **Closed vocabulary.** New types or predicates are added to a vocabulary file on purpose, never invented by
    extraction. Facts outside the vocabulary are dropped and logged.
 4. **Other mods are optional.** graphcraft-memory must work with no feeders, and a mod must work without
