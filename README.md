@@ -16,6 +16,30 @@ hands Claude the result. Claude never has to search for it.
 > Status: milestones 1 and 2 of 5 (recall and capture). Feeders for other mods come next.
 > See [docs/DESIGN.md](docs/DESIGN.md).
 
+## Install
+
+You need **Python 3** on the PC (python.org, with "Add to PATH" ticked) and access to this repository on GitHub
+(it is private: the owner invites you, and Git on your PC must be signed in to GitHub, for example through GitHub
+Desktop).
+
+In a Claude Code terminal session, type:
+
+```
+/plugin install graphcraft-memory --marketplace Elusyon117/graphcraft-memory
+```
+
+Answer `y` to add the marketplace, then pick the **user** scope so it loads in every session. From a shell instead:
+
+```bash
+claude plugin install graphcraft-memory --marketplace Elusyon117/graphcraft-memory
+```
+
+**Desktop app:** click **+** next to the prompt box → **Plugins** → **Add marketplace** → `Elusyon117/graphcraft-memory`
+→ **Add plugin**.
+
+Update later with `claude plugin marketplace update elusyon-graphcraft-memory`, then
+`claude plugin update graphcraft-memory@elusyon-graphcraft-memory`.
+
 ## How it works for you
 
 Nothing to run once installed:
