@@ -42,6 +42,8 @@ CREATE TABLE IF NOT EXISTS relations (
   UNIQUE(source_id, predicate, target_id, origin_id));
 CREATE TABLE IF NOT EXISTS aliases (
   entity_id TEXT NOT NULL, alias TEXT NOT NULL, norm TEXT NOT NULL, UNIQUE(entity_id, norm));
+CREATE TABLE IF NOT EXISTS captured (
+  session_id TEXT NOT NULL, hash TEXT NOT NULL, at REAL NOT NULL, UNIQUE(session_id, hash));
 CREATE INDEX IF NOT EXISTS entities_norm ON entities(norm);
 CREATE INDEX IF NOT EXISTS aliases_norm ON aliases(norm);
 CREATE INDEX IF NOT EXISTS relations_source ON relations(source_id);
@@ -142,6 +144,9 @@ def upsert(db: sqlite3.Connection, batch: dict, origin_id: int, vocab: dict) -> 
         s, t = resolve(e.get("source")), resolve(e.get("target"))
         if not s or not t:
             report["dropped"].append(f"edge {e.get('source')!r} {p!r} {e.get('target')!r}: endpoint not found")
+            continue
+        if s == t:
+            report["dropped"].append(f"edge {e.get('source')!r} {p!r} itself: a node linked to itself says nothing")
             continue
         db.execute("INSERT OR IGNORE INTO relations(source_id, predicate, target_id, origin_id, created)"
                    " VALUES (?,?,?,?,?)", (s, p, t, origin_id, now))

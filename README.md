@@ -13,18 +13,32 @@ hands Claude the result. Claude never has to search for it.
 - **Mods plug in.** Other mods can feed it their own facts. With [zonecraft](https://github.com/Elusyon117/zonecraft)
   installed, its conflicts, crash families, knowledge and mod logs join the same graph.
 
-> Status: milestone 1 of 5 (store + recall + prompt hook). Capture and feeders come next, so the graph is only
-> filled by hand for now. See [docs/DESIGN.md](docs/DESIGN.md).
+> Status: milestones 1 and 2 of 5 (recall and capture). Feeders for other mods come next.
+> See [docs/DESIGN.md](docs/DESIGN.md).
 
-## Try it
+## How it works for you
+
+Nothing to run once installed:
+
+1. **Every prompt:** the facts linked to what you mention ride along to Claude. The status line shows
+   `memory: N facts` when there were any.
+2. **When a session ends or compacts:** the conversation (your words and Claude's, no tool output) is queued.
+3. **At your next session start:** a small model (Haiku by default) turns it into facts in the background, and a
+   toast says how many it learned.
+
+Commands: `/graph-memory` shows what is remembered and recent captures; `/graph-memory-undo` takes the last session's
+facts back out (or `/graph-memory-undo <session id>`). Settings: `capture` (on/off) and `extractModel`
+(`haiku`/`sonnet`).
 
 Needs Python 3 (standard library only).
 
-    py -3 -I graph/store.py load tests/fixture.json --ref fixture --vocab tests/fixture_vocab.json
-    py -3 -I graph/recall.py "the game crashed when I sat down in Campfires"
-    py -3 -I tests/test_graph.py
+## Develop
 
-Set `GRAPHCRAFT_DB` to a scratch path first if you don't want the example facts in your real graph.
+    py -3 -I tests/test_graph.py
+    py -3 -I tests/test_capture.py
+    claude --plugin-dir .            (a session with the mod loaded from this folder)
+
+Set `GRAPHCRAFT_DB` to a scratch path to keep test facts out of your real graph.
 
 ## Credits
 

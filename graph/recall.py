@@ -20,6 +20,7 @@ import os
 import re
 import sys
 import time
+from contextlib import closing
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -100,9 +101,12 @@ def _degree(db, eid: str) -> int:
 def recall(prompt: str, cwd: str = "", hops: int = 2, db=None) -> dict:
     t0 = time.perf_counter()
     empty = {"facts": 0, "ms": 0.0, "summary": "", "context": "", "triples": []}
-    db = db or store.connect(create=False)
     if db is None:
-        return empty
+        db = store.connect(create=False)
+        if db is None:
+            return empty
+        with closing(db):
+            return recall(prompt, cwd, hops, db)
 
     seeds = _ids_for(db, ngrams(prompt))
     if not seeds:  # nothing named: the project alone would only add noise

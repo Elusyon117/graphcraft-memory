@@ -51,12 +51,27 @@ Code would each see a different graph. Standard library only.
 Later: a meaning-based seed (local embeddings) for prompts that name nothing exactly ("that thing from yesterday").
 
 ### 3. Capture (session digest)
-- On `SessionEnd` and `PreCompact`, keep the user's words and Claude's replies; drop tool calls, results, file dumps
-  and thinking. Skip short sessions.
-- Extraction runs out of band (headless `claude -p`, or handed to a background sub-agent at the next session start)
-  with a prompt that allows only the vocabulary in force.
-- The result is validated: unknown types or predicates are dropped and logged, never stored.
-- Upsert with `origin = session`.
+- **Draft and queue** (fast, no model): after every reply of the main conversation (`turn.complete`) the mod rewrites
+  `<data>/drafts/<session>.json` with the user's and Claude's message text; tool calls and results never enter it.
+  `session.end` only writes a `<session>.ended` marker: by then the REPL has unmounted and `$.session.messages()`
+  fails ("no session is bound"), found in the first live test. `capture.py pending` queues a draft with a marker at
+  once, and any draft unchanged for 30 minutes (a crash or a closed window raises no `session.end`). Before a
+  compaction (manual, auto, plugin; not `precompute`) the messages about to be compacted are queued directly.
+- **Extract** (background, at the next `session.start`, and right after a compaction): for each queued file,
+  `capture.py claim` moves it to `working/` (atomic, so two open sessions never extract the same file), `prepare`
+  drops messages already captured for that session, skips fewer than 3 new user messages, strips system tags and
+  redacts secrets, keeps the newest 24,000 characters, and builds the prompt (`graph/extract_prompt.md`) with the
+  vocabulary in force and the names already in memory, so the model reuses them. The mod makes one
+  `$.model.complete` call (`extractModel`, default `haiku`).
+- **Check and store:** `apply` reads the JSON in the reply; unknown types or predicates and self-links are dropped and
+  logged, never stored. Facts are upserted with `origin = session:<id>` and the project folder; nodes marked
+  `"scope": "global"` (most preferences) stay global, the rest belong to the project. `retire` entries mark old facts
+  no longer true.
+- **Failures:** a failed call goes back to the queue; the third failure moves the file to `failed/`. A claim left by
+  a session that died is queued again after 15 minutes.
+- **Tell and undo:** a toast after extraction ("memory: +14 facts from 1 earlier conversation"); `/graph-memory` shows
+  counts and recent captures (`<data>/capture.jsonl`), `/graph-memory-undo [session|last]` removes one session's facts.
+- Setting `capture` (default on) turns all of this off, leaving recall only.
 
 ### 4. Feeders (how other mods plug in)
 A mod that wants to feed the graph ships `graphcraft/feeder.json` in its plugin folder:
@@ -114,6 +129,7 @@ already tried, before Claude replies, and it survives compaction because it is r
 5. **Meaning-based seeding** for prompts that name nothing exactly.
 
 ## Known limits (plan for them)
+- Facts from a session reach recall only after the next session start (or a compaction), not during it.
 - Each prompt starts a fresh Python process: recall itself takes a few ms, but the round trip is about 230 ms on
   Windows (interpreter start). Later: keep one recall process alive with `$.process.spawn` and talk to it over
   stdin/stdout.
