@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>graphcraft-memory map</title>
+<style>
+:root{--bg:#f7f6f2;--panel:#ffffff;--lane:#efede6;--text:#1f1e1b;--text2:#5f5e5a;--muted:#8a8984;--border:rgba(0,0,0,.12);--border2:rgba(0,0,0,.24);--edge:#b4b2a9;--hi:#534ab7;--accent:#185fa5}
+@media (prefers-color-scheme: dark){:root{--bg:#1b1b19;--panel:#242422;--lane:#2a2a27;--text:#ecebe6;--text2:#b4b2a9;--muted:#888780;--border:rgba(255,255,255,.12);--border2:rgba(255,255,255,.26);--edge:#5f5e5a;--hi:#afa9ec;--accent:#85b7eb}}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:14px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+#app{display:grid;grid-template-rows:auto auto 1fr;height:100%}
+.bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 16px;border-bottom:1px solid var(--border);background:var(--panel)}
+.title{font-weight:600}
+.muted{color:var(--muted);font-size:12px}
+input,select,button{font:inherit;font-size:13px;color:var(--text);background:transparent;border:1px solid var(--border2);border-radius:8px;padding:4px 10px}
+input{height:30px;width:200px}
+button{cursor:pointer}
+button.on{background:var(--lane);border-color:var(--text2)}
+.chip{border-radius:999px;font-size:12px;padding:3px 10px;display:inline-flex;align-items:center;gap:6px;color:var(--text2)}
+.chip.off{opacity:.4}
+.dot{width:9px;height:9px;border-radius:50%;display:inline-block}
+.main{display:grid;grid-template-columns:minmax(0,1fr) 300px;min-height:0}
+svg{width:100%;height:100%;display:block;cursor:grab;user-select:none}
+svg.panning{cursor:grabbing}
+.side{border-left:1px solid var(--border);background:var(--panel);padding:14px 16px;overflow:auto;color:var(--text2)}
+.side h2{font-size:16px;margin:4px 0 6px;color:var(--text);font-weight:600;word-break:break-word}
+.fact{border-top:1px solid var(--border);padding:7px 0;font-size:13px;color:var(--text)}
+.fact .p{color:var(--accent)}
+.fact .o{display:block;color:var(--muted);font-size:11px}
+.fact a{color:inherit;cursor:pointer;text-decoration:underline dotted}
+.empty{padding:40px;color:var(--text2);max-width:520px}
+code{font-family:ui-monospace,Consolas,monospace;font-size:12px}
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="bar">
+    <span class="title">graphcraft-memory</span>
+    <span class="muted" id="counts"></span>
+    <select id="project" title="Project"></select>
+    <input id="q" placeholder="Find a node" autocomplete="off">
+    <span style="flex:1"></span>
+    <button id="mStruct" class="on" title="Each type in its own column">Structured</button>
+    <button id="mFree" title="Let the layout move freely">Free</button>
+    <button id="why" title="Only decisions and their reasons">Why chains</button>
+    <button id="fit" title="Fit everything in view">Fit</button>
+  </div>
+  <div class="bar" id="chips" style="padding:8px 16px"></div>
+  <div class="main">
+    <svg id="svg"><defs>
+      <marker id="ar" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0L10,5L0,10z" fill="var(--edge)"/></marker>
+      <marker id="arh" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0L10,5L0,10z" fill="var(--hi)"/></marker>
+    </defs><g id="world"><g id="lanes"></g><g id="edges"></g><g id="nodes"></g></g></svg>
+    <div class="side" id="side"></div>
+  </div>
+</div>
+<script id="data" type="application/json">/*__GRAPH_DATA__*/null</script>
+<script>
+(() => {
+const DATA = JSON.parse(document.getElementById('data').textContent) || {nodes: [], edges: [], projects: []};
+const NS = 'http://www.w3.org/2000/svg';
+const MAX_NODES = 300;
+const LANE_W = 230, ROW_H = 74;
+const LANES = ['You and projects', 'Decisions', 'Problems', 'Files, tools, mods', 'Preferences'];
+const LANE_OF = {PERSON: 0, PROJECT: 0, MOD: 0, DECISION: 1, CHECKPOINT: 1, PROBLEM: 2, CRASH_FAMILY: 2,
+  FILE: 3, TOOL: 3, CONCEPT: 3, ASSET: 3, CFG_SID: 3, NEXUS_MOD: 3, INPUT_ACTION: 3, KNOWLEDGE_TOPIC: 3, PREFERENCE: 4};
+const COLOR = {PROJECT: '#1D9E75', MOD: '#1D9E75', PERSON: '#378ADD', DECISION: '#7F77DD', CHECKPOINT: '#7F77DD',
+  PROBLEM: '#D85A30', CRASH_FAMILY: '#D85A30', PREFERENCE: '#D4537E', FILE: '#888780', TOOL: '#888780',
+  CONCEPT: '#BA7517', ASSET: '#888780', NEXUS_MOD: '#5F5E5A'};
+const EXTRA = ['#0F6E56', '#993556', '#3C3489', '#639922', '#185FA5'];
+const WHY = new Set(['because', 'fixed_by', 'decided', 'failed_because', 'tried']);
+const laneOf = t => LANE_OF[t] ?? 3;
+const colorOf = t => COLOR[t] || EXTRA[[...t].reduce((a, c) => a + c.charCodeAt(0), 0) % EXTRA.length];
+const $ = id => document.getElementById(id);
+const el = (tag, attrs, parent) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); if (parent) parent.appendChild(e); return e; };
+const short = ref => (ref || '').slice(0, 8);
+const when = s => s ? new Date(s * 1000).toLocaleDateString() : '';
+const base = p => (p || '').split(/[\\/]/).filter(Boolean).pop() || p;
+
+// ---- state
+let mode = 'struct', whyOnly = false, focus = null, hover = null, project = DATA.startProject || '';
+const off = new Set();
+let nodes = [], edges = [], byId = new Map(), alpha = 1, running = false, autoFit = true;
+const view = {x: 0, y: 0, k: 1};
+
+// ---- controls
+const sel = $('project');
+sel.appendChild(new Option('All projects', ''));
+DATA.projects.forEach(p => sel.appendChild(new Option(base(p), p)));
+const startMatch = DATA.projects.find(p => p === project || base(p).toLowerCase() === project.toLowerCase());
+project = startMatch || ''; sel.value = project;
+sel.onchange = () => { project = sel.value; focus = null; rebuild(); };
+$('q').oninput = paint;
+$('mStruct').onclick = () => setMode('struct');
+$('mFree').onclick = () => setMode('free');
+$('why').onclick = e => { whyOnly = !whyOnly; e.target.classList.toggle('on', whyOnly); paint(); };
+$('fit').onclick = fit;
+
+function setMode(m) { mode = m; $('mStruct').classList.toggle('on', m === 'struct'); $('mFree').classList.toggle('on', m === 'free'); $('lanes').style.display = m === 'struct' ? '' : 'none'; autoFit = true; kick(0.9); }
+
+// ---- data for the chosen project
+function rebuild() {
+  const all = new Map(DATA.nodes.map(n => [n.id, n]));
+  let es = DATA.edges.filter(e => all.has(e.s) && all.has(e.t) && (!project || e.project === project));
+  const keep = new Set(); es.forEach(e => { keep.add(e.s); keep.add(e.t); });
+  if (project) DATA.nodes.forEach(n => { if (n.scope === project) keep.add(n.id); });
+  else DATA.nodes.forEach(n => keep.add(n.id));
+  const degree = new Map(); es.forEach(e => { degree.set(e.s, (degree.get(e.s) || 0) + 1); degree.set(e.t, (degree.get(e.t) || 0) + 1); });
+  let ids = [...keep];
+  let capped = 0;
+  if (ids.length > MAX_NODES) { ids.sort((a, b) => (degree.get(b) || 0) - (degree.get(a) || 0)); capped = ids.length - MAX_NODES; ids = ids.slice(0, MAX_NODES); }
+  const idset = new Set(ids);
+  es = es.filter(e => idset.has(e.s) && idset.has(e.t));
+  // one edge per (s, p, t); its sources listed together
+  const merged = new Map();
+  es.forEach(e => { const k = e.s + '|' + e.p + '|' + e.t; if (!merged.has(k)) merged.set(k, {...e, origins: []}); merged.get(k).origins.push(e); });
+  const old = byId;
+  const perLane = [0, 0, 0, 0, 0];
+  nodes = ids.map(id => { const n = all.get(id); const lane = laneOf(n.type); const prev = old.get(id);
+    const row = perLane[lane]++;
+    return {...n, lane, deg: degree.get(id) || 0, x: prev ? prev.x : lane * LANE_W + (Math.random() - .5) * 20, y: prev ? prev.y : row * ROW_H + (Math.random() - .5) * 20, vx: 0, vy: 0}; });
+  byId = new Map(nodes.map(n => [n.id, n]));
+  edges = [...merged.values()].map(e => ({...e, a: byId.get(e.s), b: byId.get(e.t)}));
+  nodes.forEach(n => { n.fixed = n.type === 'PROBLEM' && edges.some(e => e.a === n && e.p === 'fixed_by'); });
+  const rows = Math.max(...perLane, 4);
+  $('counts').textContent = `${nodes.length} nodes · ${edges.length} facts` + (capped ? ` · ${capped} smaller nodes hidden` : '') + ` · built ${when(DATA.generated)}`;
+  drawChips(); drawLanes(rows); drawShapes(); side(); fit(true); autoFit = true; kick(1);
+  if (!DATA.nodes.length) showEmpty();
+}
+
+function drawChips() {
+  const box = $('chips'); box.innerHTML = '';
+  const types = [...new Set(nodes.map(n => n.type))].sort((a, b) => laneOf(a) - laneOf(b));
+  types.forEach(t => { const b = document.createElement('button'); b.className = 'chip' + (off.has(t) ? ' off' : '');
+    const d = document.createElement('span'); d.className = 'dot'; d.style.background = colorOf(t); b.append(d, t.toLowerCase());
+    b.onclick = () => { off.has(t) ? off.delete(t) : off.add(t); b.classList.toggle('off'); paint(); }; box.appendChild(b); });
+}
+
+function drawLanes(rows) {
+  const g = $('lanes'); g.innerHTML = '';
+  const h = Math.max(rows, 4) * ROW_H + 80;
+  LANES.forEach((name, i) => {
+    el('rect', {x: i * LANE_W - LANE_W / 2 + 8, y: -60, width: LANE_W - 16, height: h, rx: 10, fill: i % 2 ? 'transparent' : 'var(--lane)'}, g);
+    const t = el('text', {x: i * LANE_W, y: -38, 'text-anchor': 'middle', 'font-size': 13, fill: 'var(--muted)'}, g); t.textContent = name;
+  });
+  g.style.display = mode === 'struct' ? '' : 'none';
+}
+
+function wrap(name) {
+  const words = name.split(/\s+/), lines = []; let cur = '';
+  words.forEach(w => { if ((cur + ' ' + w).trim().length > 20 && cur) { lines.push(cur.trim()); cur = w; } else cur += ' ' + w; });
+  lines.push(cur.trim());
+  if (lines.length > 2) { lines.length = 2; lines[1] = lines[1].slice(0, 18) + '…'; }
+  return lines;
+}
+
+function drawShapes() {
+  const ge = $('edges'), gn = $('nodes'); ge.innerHTML = ''; gn.innerHTML = '';
+  edges.forEach(e => { e.path = el('path', {fill: 'none', stroke: 'var(--edge)', 'stroke-width': 1.3, 'marker-end': 'url(#ar)'}, ge);
+    e.label = el('text', {'font-size': 11, fill: 'var(--muted)', 'text-anchor': 'middle'}, ge); e.label.textContent = e.p; });
+  nodes.forEach(n => {
+    const g = el('g', {style: 'cursor:pointer'}, gn); n.g = g; n.r = n.type === 'PROJECT' || n.type === 'MOD' ? 13 : 9 + Math.min(n.deg, 6) * 0.6;
+    el('circle', {r: n.r, fill: colorOf(n.type), stroke: 'var(--bg)', 'stroke-width': 2.5}, g);
+    if (n.fixed) { const c = el('text', {y: 4, 'text-anchor': 'middle', 'font-size': 11, fill: '#fff'}, g); c.textContent = '✓'; }
+    wrap(n.name).forEach((ln, i) => { const t = el('text', {y: n.r + 14 + i * 13, 'text-anchor': 'middle', 'font-size': 12, fill: 'var(--text)'}, g); t.textContent = ln; });
+    const title = el('title', {}, g); title.textContent = n.description || n.name;
+    g.addEventListener('mouseenter', () => { hover = n.id; paint(); });
+    g.addEventListener('mouseleave', () => { hover = null; paint(); });
+    g.addEventListener('pointerdown', ev => startDrag(ev, n));
+  });
+  paint();
+}
+
+// ---- physics: repulsion, springs, a pull toward the node's lane (structured) or the centre (free), collisions
+function kick(a) { alpha = Math.max(alpha, a); if (!running) { running = true; requestAnimationFrame(step); } }
+function step() {
+  const struct = mode === 'struct';
+  const cx = 2 * LANE_W, cy = nodes.length ? nodes.reduce((s, n) => s + n.y, 0) / nodes.length : 0;
+  for (let i = 0; i < nodes.length; i++) { const a = nodes[i];
+    for (let j = i + 1; j < nodes.length; j++) { const b = nodes[j];
+      let dx = b.x - a.x, dy = b.y - a.y; let d2 = dx * dx + dy * dy; if (d2 < 1) { dx = Math.random(); dy = Math.random(); d2 = 1; }
+      const d = Math.sqrt(d2), f = Math.min(2600 / d2, 8) * alpha;
+      a.vx -= dx / d * f; a.vy -= dy / d * f; b.vx += dx / d * f; b.vy += dy / d * f;
+      const min = a.r + b.r + 34; if (d < min) { const push = (min - d) / 2 * 0.5; a.x -= dx / d * push; a.y -= dy / d * push; b.x += dx / d * push; b.y += dy / d * push; } } }
+  edges.forEach(e => { const dx = e.b.x - e.a.x, dy = e.b.y - e.a.y, d = Math.hypot(dx, dy) || 1;
+    const want = struct ? Math.max(LANE_W * Math.abs(e.a.lane - e.b.lane), 90) : 130;
+    const f = (d - want) * 0.012 * alpha; e.a.vx += dx / d * f; e.a.vy += dy / d * f; e.b.vx -= dx / d * f; e.b.vy -= dy / d * f; });
+  nodes.forEach(n => {
+    if (struct) n.vx += (n.lane * LANE_W - n.x) * 0.18 * alpha; else n.vx += (cx - n.x) * 0.004 * alpha;
+    n.vy += (cy - n.y) * (struct ? 0.002 : 0.004) * alpha;
+    if (n === dragging) { n.vx = n.vy = 0; return; }
+    n.vx *= 0.6; n.vy *= 0.6; n.x += n.vx; n.y += n.vy; });
+  place();
+  alpha *= 0.985;
+  if (alpha > 0.01 || dragging) requestAnimationFrame(step);
+  else { running = false; if (autoFit) { autoFit = false; fit(); } }
+}
+
+function place() {
+  const struct = mode === 'struct';
+  nodes.forEach(n => n.g.setAttribute('transform', `translate(${n.x},${n.y})`));
+  edges.forEach(e => { const {a, b} = e; const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy) || 1;
+    const sx = a.x + dx / d * a.r, sy = a.y + dy / d * a.r, tx = b.x - dx / d * (b.r + 3), ty = b.y - dy / d * (b.r + 3);
+    if (struct && Math.abs(dx) > 40) { const mx = (sx + tx) / 2; e.path.setAttribute('d', `M${sx},${sy} C${mx},${sy} ${mx},${ty} ${tx},${ty}`); }
+    else e.path.setAttribute('d', `M${sx},${sy} L${tx},${ty}`);
+    e.label.setAttribute('x', (a.x + b.x) / 2); e.label.setAttribute('y', (a.y + b.y) / 2 - 5); });
+}
+
+// ---- what is shown and highlighted
+function neighbours(id) { const s = new Set([id]); edges.forEach(e => { if (e.s === id) s.add(e.t); if (e.t === id) s.add(e.s); }); return s; }
+function paint() {
+  const q = $('q').value.trim().toLowerCase();
+  const key = hover || focus, near = key ? neighbours(key) : null;
+  const inWhy = new Set(); edges.forEach(e => { if (WHY.has(e.p)) { inWhy.add(e.s); inWhy.add(e.t); } });
+  const visible = n => !off.has(n.type) && (!whyOnly || inWhy.has(n.id));
+  const matches = n => !q || n.name.toLowerCase().includes(q) || (n.aliases || []).some(a => a.toLowerCase().includes(q));
+  nodes.forEach(n => { const show = visible(n); n.g.style.display = show ? '' : 'none';
+    n.g.style.opacity = !matches(n) ? 0.15 : near && !near.has(n.id) ? 0.2 : 1;
+    n.g.firstChild.setAttribute('stroke', n.id === focus ? 'var(--text)' : 'var(--bg)'); });
+  const labels = view.k > 0.75;
+  edges.forEach(e => { const show = visible(e.a) && visible(e.b) && (!whyOnly || WHY.has(e.p));
+    const hit = key && (e.s === key || e.t === key);
+    e.path.style.display = e.label.style.display = show ? '' : 'none';
+    e.path.setAttribute('stroke', hit ? 'var(--hi)' : 'var(--edge)'); e.path.setAttribute('stroke-width', hit ? 2.4 : 1.3);
+    e.path.setAttribute('marker-end', hit ? 'url(#arh)' : 'url(#ar)');
+    e.path.style.opacity = near && !hit ? 0.1 : 1;
+    e.label.style.opacity = hit || (labels && !near) ? 1 : 0; });
+}
+
+// ---- the details panel
+function side() {
+  const box = $('side'); box.innerHTML = '';
+  if (!focus || !byId.has(focus)) {
+    const p = document.createElement('div');
+    p.innerHTML = '<p>Hover a node to light up its links. Click it to see its facts here.</p><p class="muted">Drag nodes to move them, drag the background to pan, scroll to zoom. <b>Structured</b> keeps each type in its column; <b>Why chains</b> keeps only decisions and their reasons.</p>';
+    const db = document.createElement('p'); db.className = 'muted'; db.textContent = 'Graph: ' + (DATA.db || ''); p.appendChild(db);
+    box.appendChild(p); return; }
+  const n = byId.get(focus);
+  const head = document.createElement('div'); head.className = 'muted';
+  const dot = document.createElement('span'); dot.className = 'dot'; dot.style.background = colorOf(n.type); dot.style.marginRight = '6px';
+  head.append(dot, n.type.toLowerCase() + (n.fixed ? ' · fixed' : '') + (n.scope && n.scope !== 'global' ? ' · ' + base(n.scope) : ' · global'));
+  const h = document.createElement('h2'); h.textContent = n.name;
+  box.append(head, h);
+  if (n.description) { const d = document.createElement('p'); d.textContent = n.description; box.appendChild(d); }
+  if (n.aliases && n.aliases.length) { const a = document.createElement('p'); a.className = 'muted'; a.textContent = 'Also called: ' + n.aliases.join(', '); box.appendChild(a); }
+  edges.filter(e => e.s === n.id || e.t === n.id).forEach(e => {
+    const f = document.createElement('div'); f.className = 'fact';
+    const other = e.s === n.id ? e.b : e.a;
+    const link = document.createElement('a'); link.textContent = other.name; link.onclick = () => { focus = other.id; side(); paint(); };
+    const p = document.createElement('span'); p.className = 'p'; p.textContent = ' ' + e.p + ' ';
+    if (e.s === n.id) f.append(p, link); else f.append(link, p);
+    const o = document.createElement('span'); o.className = 'o';
+    o.textContent = e.origins.map(x => (x.kind === 'session' ? 'session ' + short(x.ref) : x.kind + ' ' + x.ref) + ' · ' + when(x.at)).join('; ');
+    f.appendChild(o); box.appendChild(f); });
+  const sessions = [...new Set(edges.filter(e => e.s === n.id || e.t === n.id).flatMap(e => e.origins).filter(x => x.kind === 'session').map(x => x.ref))];
+  if (sessions.length) { const u = document.createElement('p'); u.className = 'muted'; u.style.marginTop = '12px';
+    u.innerHTML = 'To remove what a session added, run <code>/graph-memory-undo &lt;session id&gt;</code> in Claude Code. Sessions here: ';
+    const c = document.createElement('code'); c.textContent = sessions.join(', '); u.appendChild(c); box.appendChild(u); }
+}
+
+function showEmpty() {
+  $('side').innerHTML = '';
+  const p = document.createElement('div'); p.className = 'empty';
+  p.innerHTML = '<h2>Nothing remembered yet</h2><p>Work in Claude Code as usual. When a session ends, graphcraft-memory reads it at the next start and its facts appear here. Run <code>/graph-view</code> again to refresh this page.</p>';
+  $('side').appendChild(p);
+}
+
+// ---- zoom, pan, drag
+const svg = $('svg'), world = $('world');
+function apply() { world.setAttribute('transform', `translate(${view.x},${view.y}) scale(${view.k})`); }
+function toWorld(ev) { const r = svg.getBoundingClientRect(); return {x: (ev.clientX - r.left - view.x) / view.k, y: (ev.clientY - r.top - view.y) / view.k}; }
+function fit(quiet) {
+  if (!nodes.length) { view.x = 60; view.y = 80; view.k = 1; apply(); return; }
+  const r = svg.getBoundingClientRect();
+  const xs = nodes.map(n => n.x), ys = nodes.map(n => n.y);
+  let x0 = Math.min(...xs) - 120, x1 = Math.max(...xs) + 120, y0 = Math.min(...ys) - 90, y1 = Math.max(...ys) + 90;
+  if (mode === 'struct') { x0 = Math.min(x0, -LANE_W / 2); x1 = Math.max(x1, 4 * LANE_W + LANE_W / 2); }
+  view.k = Math.max(0.25, Math.min(1.4, Math.min(r.width / (x1 - x0), r.height / (y1 - y0))));
+  view.x = (r.width - (x1 - x0) * view.k) / 2 - x0 * view.k; view.y = (r.height - (y1 - y0) * view.k) / 2 - y0 * view.k;
+  apply(); if (!quiet) paint();
+}
+svg.addEventListener('wheel', ev => { ev.preventDefault(); const r = svg.getBoundingClientRect(); const px = ev.clientX - r.left, py = ev.clientY - r.top;
+  const k = Math.max(0.2, Math.min(3, view.k * Math.exp(-ev.deltaY * 0.0015)));
+  view.x = px - (px - view.x) * k / view.k; view.y = py - (py - view.y) * k / view.k; view.k = k; apply(); paint(); }, {passive: false});
+let dragging = null, moved = false, pan = null;
+function startDrag(ev, n) { ev.stopPropagation(); dragging = n; moved = false; svg.setPointerCapture(ev.pointerId); kick(0.3); }
+svg.addEventListener('pointerdown', ev => { pan = {x: ev.clientX - view.x, y: ev.clientY - view.y}; moved = false; svg.classList.add('panning'); svg.setPointerCapture(ev.pointerId); });
+svg.addEventListener('pointermove', ev => {
+  if (dragging) { const p = toWorld(ev); dragging.x = p.x; dragging.y = p.y; moved = true; place(); kick(0.2); }
+  else if (pan) { view.x = ev.clientX - pan.x; view.y = ev.clientY - pan.y; moved = true; apply(); } });
+svg.addEventListener('pointerup', () => {
+  if (dragging && !moved) { focus = focus === dragging.id ? null : dragging.id; side(); paint(); }
+  else if (pan && !moved && focus) { focus = null; side(); paint(); }
+  dragging = null; pan = null; svg.classList.remove('panning'); });
+window.addEventListener('resize', () => fit());
+
+rebuild();
+})();
+</script>
+</body>
+</html>

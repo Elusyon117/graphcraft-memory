@@ -4,7 +4,7 @@ import type { EngineInterface as Engine, Register } from 'claude-code'
 // - prompt.submit: recall the facts linked to the prompt and attach them as context (never blocks a prompt)
 // - turn.complete: keep a draft of the conversation; session.end marks it finished; session.compact queues it
 // - session.start: extract queued conversations in the background with a small model, then tell the user
-// - /graph-memory and /graph-memory-undo: see what was learned, take a session's facts back out
+// - /graph-memory, /graph-memory-undo, /graph-view: see what was learned, take a session back out, open the map
 
 const CANDIDATES: readonly (readonly string[])[] = [['py', '-3'], ['python3'], ['python']]
 const RECALL_TIMEOUT_MS = 5000
@@ -200,12 +200,31 @@ export const register: Register = (on, options) => {
       name: 'graph-memory-undo',
       description: 'graphcraft-memory: remove the facts one session added (default: the last one)',
     })
+    await $.command.register({
+      name: 'graph-view',
+      description: 'graphcraft-memory: open the memory map in your browser (optionally: a project name)',
+    })
     const started = await next(e)
     if (isCapturing) void drain($, model)
     return started
   })
 
   on('command.run', { command: 'graph-memory' }, async $ => ({ text: await memoryReport($) }))
+
+  on('command.run', { command: 'graph-view' }, async ($, e) => {
+    const args = ['build', '--open']
+    if (e.args.trim()) args.push('--project', e.args.trim())
+    const out = await runPy($, 'view.py', args, CAPTURE_TIMEOUT_MS)
+    if (!out || typeof out.path !== 'string')
+      return { text: `graphcraft-memory: could not build the map (${String(out?.error ?? 'is Python 3 installed?')}).` }
+    const where = slash(out.path)
+    const counts = `${plural(Number(out.nodes ?? 0), 'node')}, ${plural(Number(out.edges ?? 0), 'fact')}`
+    return {
+      text: out.opened
+        ? `graphcraft-memory: map opened in your browser (${counts}).\nFile: ${where}`
+        : `graphcraft-memory: map written (${counts}). Open it in your browser: ${String(out.url)}`,
+    }
+  })
 
   on('command.run', { command: 'graph-memory-undo' }, async ($, e) => {
     const out = await runPy($, 'capture.py', ['undo', e.args.trim() || 'last'], CAPTURE_TIMEOUT_MS)

@@ -51,7 +51,8 @@ Nothing to run once installed:
    toast says how many it learned.
 
 Commands: `/graph-memory` shows what is remembered and recent captures; `/graph-memory-undo` takes the last session's
-facts back out (or `/graph-memory-undo <session id>`). Settings: `capture` (on/off) and `extractModel`
+facts back out (or `/graph-memory-undo <session id>`); `/graph-view` opens an offline map of the whole graph in your
+browser (structured or free layout, a "Why chains" filter, click a node for its facts). Settings: `capture` (on/off) and `extractModel`
 (`haiku`/`sonnet`).
 
 Needs Python 3 (standard library only).
