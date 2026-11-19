@@ -1,6 +1,6 @@
 {
   "name": "graphcraft-memory",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "description": "Knowledge-graph memory for Claude Code: facts from every session are linked into one graph per machine, and the relevant part is handed to Claude before each prompt. Other mods (like zonecraft) can feed it.",
   "author": {
     "name": "Elusyon117",
@@ -19,7 +19,7 @@
     "capture": {
       "type": "boolean",
       "title": "Learn from conversations",
-      "description": "Save each conversation when it ends or compacts, and turn it into facts at the next session start (one small model call per conversation). Off: recall only.",
+      "description": "Save each conversation and turn it into facts: as it goes (see the next setting), when it compacts, and at the next session start for the rest. Off: recall only.",
       "default": true
     },
     "extractModel": {
@@ -31,6 +31,12 @@
         "sonnet"
       ],
       "default": "haiku"
+    },
+    "captureEvery": {
+      "type": "number",
+      "title": "Learn during the conversation",
+      "description": "Also read the conversation after every this many of your messages, so what is settled now is recalled in this session too (one small model call each time). 0: only when it ends or compacts.",
+      "default": 8
     }
   }
 }

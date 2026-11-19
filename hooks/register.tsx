@@ -4,8 +4,11 @@ import type { EngineInterface as Engine, Register } from 'claude-code'
 import type { Clawd, Fixing, PaneFact, PaneView, Searched, Used } from '../types'
 
 // graphcraft-memory, the mod side. Python (graph/) owns the graph; this module only decides when things run:
-// - prompt.submit: recall the facts linked to the prompt and attach them as context (never blocks a prompt)
-// - turn.complete: keep a draft of the conversation; session.end marks it finished; session.compact queues it
+// - prompt.submit: recall the facts linked to the prompt and attach them as context (never blocks a prompt); recall
+//   runs in one Python process kept warm for the session (graph/serve.py), else in a fresh recall.py
+// - turn.complete: keep a draft of the conversation; every `captureEvery` messages of yours, read the new part now,
+//   so what is settled mid-session is recalled in this session too; session.end marks the draft finished;
+//   session.compact queues it
 // - session.start: read other mods' feeder files (graph/feeders.py), then extract queued conversations in the
 //   background with a small model, and tell the user
 // - /graph-memory, /graph-memory-undo, /graph-view: see what was learned, take a session back out, open the map
@@ -40,6 +43,73 @@ const renaming = atom({ plugin: 'graphcraft-memory', key: 'renaming' } as const,
 const searched = atom({ plugin: 'graphcraft-memory', key: 'searched' } as const, null as Searched | null, { shape: 'searched-1' })
 const fixing = atom({ plugin: 'graphcraft-memory', key: 'fixing' } as const, null as Fixing | null, { shape: 'fixing-1' })
 const SHOW_SEARCH = 6
+
+// The warm recall process (graph/serve.py): its port and this session's token once it has said its port.
+let warm: { port: number; token: string } | undefined
+let warmStarting = false
+const WARM_TIMEOUT_MS = 2000
+
+type Recalled = {
+  facts: number
+  summary: string
+  context: string
+  db: string
+  prompt_chars: number
+  triples?: PaneFact[]
+  matched?: string[]
+  more?: number
+}
+
+/** Starts graph/serve.py for the session's life (the spawn loop ends with the module); never throws. */
+function startWarm($: Engine, py: readonly string[]): void {
+  if (warm || warmStarting) return
+  warmStarting = true
+  const token = crypto.randomUUID()
+  void (async () => {
+    try {
+      const child = $.process.spawn({ argv: [...py, '-I', `${slash($.plugin.root)}/graph/serve.py`], env: { GRAPHCRAFT_TOKEN: token } })
+      let said = ''
+      for await (const { stream, text } of child) {
+        if (stream === 'stderr') $.ui.log(`graphcraft-memory: serve.py: ${text.slice(0, 300)}`, { to: 'debug' })
+        else if (!warm) {
+          said += text
+          const port = /"port":\s*(\d+)/.exec(said)
+          if (port) {
+            warm = { port: Number(port[1]), token }
+            warmStarting = false
+          }
+        }
+      }
+    } catch (err) {
+      $.ui.log(`graphcraft-memory: warm recall did not start: ${String(err).slice(0, 200)}`, { to: 'debug' })
+    } finally {
+      warm = undefined
+      warmStarting = false
+    }
+  })()
+}
+
+/** Recall through the warm process; undefined when it is not there or does not answer in time. */
+async function recallWarm($: Engine, prompt: string, cwd: string): Promise<Recalled | undefined> {
+  const w = warm
+  if (!w) return undefined
+  try {
+    const late = new Promise<undefined>(done => setTimeout(() => done(undefined), WARM_TIMEOUT_MS))
+    const r = await Promise.race([
+      $.http.fetch(`http://127.0.0.1:${w.port}/recall`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Token': w.token },
+        body: JSON.stringify({ prompt, cwd }),
+      }),
+      late,
+    ])
+    if (r?.ok) return JSON.parse(r.text) as Recalled
+  } catch {
+    // not answering: below
+  }
+  if (warm === w) warm = undefined // a fresh one starts with this prompt's fallback
+  return undefined
+}
 
 // Found once per load; undefined = not looked yet, null = no Python 3 on this machine.
 let python: readonly string[] | null | undefined
@@ -114,7 +184,7 @@ async function saveJob($: Engine, where: 'pending' | 'drafts', trigger: string, 
 }
 
 /** Extracts every queued conversation: claim, prepare, one model call, apply. Never throws. */
-async function drain($: Engine, model: string): Promise<void> {
+async function drain($: Engine, model: string, from = 'earlier conversation'): Promise<void> {
   if (draining) return
   draining = true
   let facts = 0
@@ -162,7 +232,7 @@ async function drain($: Engine, model: string): Promise<void> {
   } finally {
     draining = false
   }
-  if (facts > 0) $.ui.toast(`memory: +${plural(facts, 'fact')} from ${plural(sessions, 'earlier conversation')}`)
+  if (facts > 0) $.ui.toast(`memory: +${plural(facts, 'fact')} from ${from === 'this conversation' ? from : plural(sessions, from)}`)
 }
 
 async function memoryReport($: Engine): Promise<string> {
@@ -340,6 +410,9 @@ async function tellClaude($: Engine, f: PaneFact, truth: string): Promise<void> 
 export const register: Register = (on, options) => {
   const model = typeof options.extractModel === 'string' && options.extractModel ? options.extractModel : 'haiku'
   const isCapturing = options.capture !== false
+  const every = typeof options.captureEvery === 'number' ? Math.max(0, Math.round(options.captureEvery)) : 8
+  // Per session: how many of the person's messages had been queued for reading when it last happened.
+  const queuedAt = new Map<string, number>()
 
   on('prompt.submit', async ($, e, next) => {
     if (e.command || e.isMeta || !e.text.trim()) return next(e)
@@ -350,25 +423,21 @@ export const register: Register = (on, options) => {
     // words, so a long paste is cut to stay under Windows' command-line limit.
     const prompt = e.text.slice(0, MAX_PROMPT_CHARS)
     const cwd = await $.session.cwd()
-    const r = await $.process.run(
-      [...py, '-I', `${slash($.plugin.root)}/graph/recall.py`, '--json', '--cwd', cwd, '--', prompt],
-      { timeoutMs: RECALL_TIMEOUT_MS },
-    )
-    if (r.exitCode !== 0) {
-      $.ui.log(`graphcraft-memory: recall failed: ${r.stderr.slice(0, 300)}`, { to: 'debug' })
-      return next(e)
+    let out = await recallWarm($, prompt, cwd)
+    const how = out ? 'warm' : 'cold'
+    if (!out) {
+      startWarm($, py) // for the next prompt
+      const r = await $.process.run(
+        [...py, '-I', `${slash($.plugin.root)}/graph/recall.py`, '--json', '--cwd', cwd, '--', prompt],
+        { timeoutMs: RECALL_TIMEOUT_MS },
+      )
+      if (r.exitCode !== 0) {
+        $.ui.log(`graphcraft-memory: recall failed: ${r.stderr.slice(0, 300)}`, { to: 'debug' })
+        return next(e)
+      }
+      out = JSON.parse(r.stdout) as Recalled
     }
-    const out = JSON.parse(r.stdout) as {
-      facts: number
-      summary: string
-      context: string
-      db: string
-      prompt_chars: number
-      triples?: PaneFact[]
-      matched?: string[]
-      more?: number
-    }
-    $.ui.log(`graphcraft-memory: ${out.facts} facts from ${out.db} (prompt ${out.prompt_chars} chars)`, { to: 'debug' })
+    $.ui.log(`graphcraft-memory: ${out.facts} facts from ${out.db} (prompt ${out.prompt_chars} chars, ${how})`, { to: 'debug' })
     $.ui.status(out.facts > 0 ? out.summary : undefined)
     await update($, used, () => ({ matched: out.matched ?? [], more: out.more ?? 0, facts: out.triples ?? [] }))
     await update($, briefShown, () => false)
@@ -420,6 +489,8 @@ export const register: Register = (on, options) => {
       isDeferred: false,
     })
     const started = await next(e)
+    const py = await findPython($)
+    if (py) startWarm($, py)
     void (async () => {
       await refreshView($)
       // memory_remember names the types and predicates in force (core plus feeders'), so it waits for Python.
@@ -443,6 +514,10 @@ export const register: Register = (on, options) => {
         await drain($, model)
         await refreshView($)
       }
+      // One thing saved twice under different types splits its facts: join them (graph/store.py merge_duplicates).
+      const merged = await runPy($, 'store.py', ['merge'], CAPTURE_TIMEOUT_MS)
+      if (Array.isArray(merged?.merged) && merged.merged.length > 0)
+        $.ui.log(`graphcraft-memory: joined duplicate nodes: ${(merged.merged as string[]).join(', ')}`, { to: 'debug' })
     })().catch(err => $.ui.log(`graphcraft-memory: session start: ${String(err).slice(0, 200)}`, { to: 'debug' }))
     return started
   })
@@ -658,7 +733,7 @@ export const register: Register = (on, options) => {
 
           {learned &&
             section(
-              'Learned last session',
+              'Learned recently',
               plural(learned.total, 'fact'),
               <Box flexDirection="column" rowGap="sm">
                 {isRenaming ? (
@@ -809,7 +884,17 @@ export const register: Register = (on, options) => {
     if (isCapturing && e.agentId === undefined) {
       void (async () => {
         try {
-          await saveJob($, 'drafts', 'turn', (await $.session.messages()) as readonly Turn[])
+          const messages = (await $.session.messages()) as readonly Turn[]
+          await saveJob($, 'drafts', 'turn', messages)
+          // Every `every` messages of the person's: read the new part now (capture.py skips what was read before).
+          const sid = await $.session.id()
+          const users = messages.filter(m => m.role === 'user' && m.text.trim() !== '').length
+          if (every > 0 && users - (queuedAt.get(sid) ?? 0) >= every) {
+            queuedAt.set(sid, users)
+            await saveJob($, 'pending', 'turns', messages)
+            await drain($, model, 'this conversation')
+            await refreshView($)
+          }
         } catch (err) {
           $.ui.log(`graphcraft-memory: could not save the draft: ${String(err).slice(0, 200)}`, { to: 'debug' })
         }

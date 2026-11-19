@@ -13,7 +13,12 @@ Steps:
    PROJECT node (by folder name) joins the seeds.
 2. Walk: breadth first, `hops` steps, retired facts skipped. A node with more than HUB links that is not a seed is
    not walked through, so one busy node cannot pull in half the graph.
-3. Rank: nearest first, then facts from this project or global before other projects' facts.
+   From any node, only its PER_NODE most important links are followed, so a busy node stays fast and its
+   weightiest facts are the ones reached.
+3. Rank by one score: importance (the kind of link, decisions, problems and preferences, a fact several sources
+   said), less NEAR_COST per link away from what the prompt named, less OTHER_PROJECT for another project's facts;
+   newest first among equals. So an old decision and its reason are not crowded out by many newer, lighter notes
+   about the same thing, while a weighty fact one link out still beats a trivial one next to the seed.
 4. Trim: at most MAX_FACTS facts and MAX_CHARS characters (about 400 tokens).
 """
 import argparse
@@ -33,6 +38,22 @@ MAX_NGRAM = 4
 HUB = 25
 MAX_FACTS = 14
 MAX_CHARS = 1800
+PER_NODE = 40
+NEAR_COST = 1.5
+OTHER_PROJECT = 1.0
+# How much a kind of link says. Reasons, choices, problems and preferences matter most; "part of" and
+# "references" are the notes a big graph has thousands of. Unlisted predicates (a feeder's own) weigh 1.
+WEIGHT = {"because": 3, "fixed_by": 3, "decided": 3, "blocked_by": 3, "avoids": 3, "prefers": 3, "crashed_with": 3,
+          "failed_because": 3, "conflicts_with": 2, "wins_over": 2, "overrides": 2, "depends_on": 2, "advice_in": 2,
+          "tried": 2, "patches": 1.5, "uses": 1.5, "works_on": 1, "about": 1, "part_of": 0.5, "references": 0.5}
+WEIGHTY_TYPES = {"DECISION", "PROBLEM", "PREFERENCE", "CRASH_FAMILY"}
+# Not walked through unless the prompt names them: the user is linked to every project, so passing through "User"
+# would bring one project's decisions into another's prompt.
+PASS_OVER = {"PERSON"}
+
+
+def weight(predicate: str, *types: str) -> float:
+    return WEIGHT.get(predicate, 1) + (1 if WEIGHTY_TYPES & set(types) else 0)
 STOP = {"the", "and", "for", "with", "this", "that", "what", "why", "how", "when", "where", "who", "was", "are",
         "you", "can", "did", "does", "not", "but", "from", "into", "then", "there", "it's", "its", "our", "your"}
 HEADER = ("graphcraft-memory: facts from earlier sessions and installed mods that are linked to this prompt. "
@@ -82,7 +103,7 @@ def walk(db, seeds: set, hops: int, later: dict | None = None) -> dict:
     frontier = set(seeds)
     for d in range(1, hops + 1):
         frontier |= {s for s in later if depth[s] == d - 1}
-        expand = [n for n in frontier if n in seeds or n in later or _degree(db, n) <= HUB]
+        expand = [n for n in frontier if n in seeds or n in later or (_degree(db, n) <= HUB and _type(db, n) not in PASS_OVER)]
         if not expand:
             if any(dd >= d for dd in later.values()):
                 frontier = set()
@@ -90,16 +111,28 @@ def walk(db, seeds: set, hops: int, later: dict | None = None) -> dict:
             break
         marks = ",".join("?" * len(expand))
         rows = db.execute(
-            f"SELECT source_id, target_id FROM relations WHERE retired IS NULL"  # noqa: S608
-            f" AND (source_id IN ({marks}) OR target_id IN ({marks}))", expand + expand)
+            f"SELECT r.source_id, r.target_id, r.predicate, r.created, es.type, et.type FROM relations r"  # noqa: S608
+            f" JOIN entities es ON es.id=r.source_id JOIN entities et ON et.id=r.target_id WHERE r.retired IS NULL"
+            f" AND (r.source_id IN ({marks}) OR r.target_id IN ({marks}))", expand + expand)
+        out, best = set(expand), {}
+        for s, t, p, c, st, tt in rows:
+            for a, b in ((s, t), (t, s)):
+                if a in out and b not in depth:
+                    best.setdefault(a, []).append((weight(p, st, tt), c, b))
         nxt = set()
-        for s, t in rows:
-            for n in (s, t):
-                if n not in depth:
-                    depth[n] = d
-                    nxt.add(n)
+        for links in best.values():  # each node's weightiest links, newest first among equals
+            links.sort(reverse=True)
+            for _, _, b in links[:PER_NODE]:
+                if b not in depth:
+                    depth[b] = d
+                    nxt.add(b)
         frontier = nxt
     return depth
+
+
+def _type(db, eid: str) -> str:
+    row = db.execute("SELECT type FROM entities WHERE id=?", (eid,)).fetchone()
+    return row[0] if row else ""
 
 
 def _degree(db, eid: str) -> int:
@@ -137,18 +170,24 @@ def recall(prompt: str, cwd: str = "", hops: int = 2, db=None, max_facts: int = 
 
     marks = ",".join("?" * len(ids))
     rows = db.execute(
-        f"SELECT es.name, r.predicate, et.name, r.source_id, r.target_id, o.kind, o.ref, o.project"  # noqa: S608
+        f"SELECT es.name, r.predicate, et.name, r.source_id, r.target_id, o.kind, o.ref, o.project,"  # noqa: S608
+        f" r.created, es.type, et.type"
         f" FROM relations r JOIN entities es ON es.id=r.source_id JOIN entities et ON et.id=r.target_id"
         f" JOIN origins o ON o.id=r.origin_id"
         f" WHERE r.retired IS NULL AND r.source_id IN ({marks}) AND r.target_id IN ({marks})", ids + ids).fetchall()
 
     here = os.path.normcase(os.path.abspath(cwd)) if cwd else ""
+    said = {}  # how many sources said each fact: one said in several sessions weighs more
+    for row in rows:
+        said[(row[3], row[1], row[4])] = said.get((row[3], row[1], row[4]), 0) + 1
 
     def rank(row):
         near = min(depth.get(row[3], 99), depth.get(row[4], 99))
         proj = os.path.normcase(os.path.abspath(row[7])) if row[7] else ""
         other_project = 1 if proj and proj != here else 0
-        return (near, other_project, row[0], row[1], row[2])
+        importance = weight(row[1], row[9], row[10]) + 0.5 * (said[(row[3], row[1], row[4])] - 1)
+        score = importance - NEAR_COST * near - OTHER_PROJECT * other_project
+        return (-score, near, -row[8], row[0], row[1], row[2])
 
     triples, seen, used = [], set(), set()
     for row in sorted(rows, key=rank):
@@ -157,7 +196,7 @@ def recall(prompt: str, cwd: str = "", hops: int = 2, db=None, max_facts: int = 
             continue
         seen.add(key)
         triples.append({"source": row[0], "predicate": row[1], "target": row[2],
-                        "origin": f"{row[5]}:{row[6]}", "near": rank(row)[0],
+                        "origin": f"{row[5]}:{row[6]}", "near": rank(row)[1],
                         "source_id": row[3], "target_id": row[4]})
         used |= {row[3], row[4]}
 

@@ -159,11 +159,18 @@ already tried, before Claude replies, and it survives compaction because it is r
    word few nodes share). Word seeds start one step out, so names the prompt says still rank first.
 
 ## Known limits (plan for them)
-- Facts from a session reach recall only after the next session start (or a compaction), not during it.
-- Each prompt starts a fresh Python process: recall itself takes a few ms, but the round trip is about 230 ms on
-  Windows (interpreter start). Later: keep one recall process alive with `$.process.spawn` and talk to it over
-  stdin/stdout.
+- Facts from a session reach recall as it goes only every `captureEvery` messages (default 8, one small model call
+  each); the rest at a compaction or the next session start. `memory_remember` saves a fact the moment it is settled.
+- Recall runs in one Python process kept for the session (`graph/serve.py`, about 5 ms a prompt), asked over
+  127.0.0.1 with a random token only this session knows (`$.process.spawn` cannot write stdin after start). When it
+  is not answering, a fresh `recall.py` runs instead (about 150-230 ms on Windows) and a new one is started.
 - Word seeding is not meaning: "the sleeping mod" finds Bedroll Mod only if a fact or description says it sleeps.
-- Hub nodes crowd results (damping in recall).
+- Big graphs: facts are ranked by one score, importance (the kind of link; decisions, problems, preferences; said by
+  several sources) less a cost per link away and for another project, newest first among equals; from any node
+  only its 40 weightiest links are walked, and a person is not walked through unless named. Tested on 3,000 facts
+  (`tests/test_ranking.py`): an old decision and its reason still come first, in about 15 ms.
+- One thing saved under two types (a concept and a tool): a new name already in memory as another type reuses that
+  node unless a fact needs the new type; `store.py merge` (run at session start) joins pairs already split, when
+  every live fact still fits the vocabulary, keeping each fact's source.
 - Wrong extractions get repeated confidently (validation, origins, and the panel to fix them).
 - Stale facts (retire instead of delete; extraction can retire "X blocked_by Y" when Y is fixed).

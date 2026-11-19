@@ -185,6 +185,54 @@ class GraphTest(unittest.TestCase):
         self.assertGreater(out["facts"], 0)
         self.assertLess(ms, 50, f"recall took {ms:.1f} ms")
 
+    # --- duplicates: one thing saved under two types ---
+
+    def types_named(self, name):
+        return sorted(r[0] for r in self.db.execute("SELECT type FROM entities WHERE norm=?", (store.normalise(name),)))
+
+    def test_same_name_as_another_type_reuses_the_node(self):
+        store.upsert(self.db, {"nodes": [{"name": "AnimBP_Player", "type": "TOOL"},
+                                         {"name": "Reinit swap on sit", "type": "DECISION"}],
+                               "edges": [{"source": "Reinit swap on sit", "predicate": "about", "target": "AnimBP_Player"}]},
+                     self.origin, VOCAB)
+        self.assertEqual(self.types_named("AnimBP_Player"), ["ASSET"])  # no TOOL twin
+        self.assertIn(("Reinit swap on sit", "about", "AnimBP_Player"), self.facts(self.ask("AnimBP_Player")))
+
+    def test_a_fact_that_needs_the_other_type_gets_it(self):
+        # "overrides" takes a MOD or NEXUS_MOD source: a Refund Policy FILE cannot be one, so a MOD node is made
+        store.upsert(self.db, {"nodes": [{"name": "Refund Policy", "type": "MOD"}],
+                               "edges": [{"source": "Refund Policy", "predicate": "overrides", "target": "AnimBP_Player"}]},
+                     self.origin, VOCAB)
+        self.assertEqual(self.types_named("Refund Policy"), ["FILE", "MOD"])
+
+    def test_merge_joins_a_split_node_and_keeps_every_source(self):
+        other = store.add_origin(self.db, "session", "s-dup")
+        self.db.execute("INSERT INTO entities(id, name, norm, type, created, updated) VALUES (?,?,?,?,1,1)",
+                        (store.entity_id("CONCEPT", "Reinit swap on sit"), "Reinit swap on sit",
+                         store.normalise("Reinit swap on sit"), "CONCEPT"))
+        self.db.execute("INSERT INTO relations(source_id, predicate, target_id, origin_id, created) VALUES (?,?,?,?,1)",
+                        (store.entity_id("CONCEPT", "Reinit swap on sit"), "about",
+                         store.entity_id("ASSET", "AnimBP_Player"), other))
+        self.db.commit()
+        out = store.merge_duplicates(self.db, VOCAB)
+        self.assertEqual(out["merged"], ["Reinit swap on sit (DECISION)"])
+        self.assertEqual(self.types_named("Reinit swap on sit"), ["DECISION"])
+        origins = {r[0] for r in self.db.execute(
+            "SELECT o.ref FROM relations r JOIN origins o ON o.id=r.origin_id WHERE r.source_id=? OR r.target_id=?",
+            (store.entity_id("DECISION", "Reinit swap on sit"),) * 2)}
+        self.assertEqual(origins, {"fixture.json", "s-dup"})
+
+    def test_merge_leaves_a_pair_whose_facts_would_break(self):
+        self.db.execute("INSERT INTO entities(id, name, norm, type, created, updated) VALUES (?,?,?,?,1,1)",
+                        (store.entity_id("PREFERENCE", "Campfires"), "Campfires", "campfires", "PREFERENCE"))
+        self.db.execute("INSERT INTO relations(source_id, predicate, target_id, origin_id, created) VALUES (?,?,?,?,1)",
+                        (store.entity_id("PREFERENCE", "Campfires"), "advice_in",
+                         store.entity_id("KNOWLEDGE_TOPIC", "animation.md / Crash families"), self.origin))
+        self.db.commit()
+        out = store.merge_duplicates(self.db, VOCAB)
+        self.assertEqual(out["left"], ["Campfires"])
+        self.assertEqual(self.types_named("Campfires"), ["MOD", "PREFERENCE"])
+
     # --- vague prompts (terms.py) ---
 
     def test_stems_split_words_and_synonyms(self):

@@ -6,6 +6,7 @@ r"""The graph store: one SQLite file per machine, upserts only.
     py -I store.py forget-origin ID                      remove everything one origin added
     py -I store.py rename SESSION TITLE                  name a session (an id, its first characters, or "last")
     py -I store.py stats                                 counts
+    py -I store.py merge                                 join nodes saved twice under different types
 (Moving the graph to another PC: sync.py.)
 
 The database is ~/.claude/graphcraft-memory/graph.db (CLAUDE_CONFIG_DIR if set), or GRAPHCRAFT_DB when set (tests).
@@ -191,11 +192,10 @@ def upsert(db: sqlite3.Connection, batch: dict, origin_id: int, vocab: dict) -> 
     report = {"nodes": 0, "edges": 0, "aliases": 0, "dropped": [], "stored": []}  # stored: (s, p, t) ids
     local = {}  # normalised name -> id, for this batch
 
-    for n in batch.get("nodes", []):
-        name, type_ = (n.get("name") or "").strip(), n.get("type")
-        if not name or type_ not in vocab["types"]:
-            report["dropped"].append(f"node {name!r}: type {type_!r} not in vocabulary")
-            continue
+    held = {}  # normalised name -> the node as given, while an existing node of another type stands in for it
+
+    def put(n: dict) -> str:
+        name, type_ = n["name"].strip(), n["type"]
         eid = entity_id(type_, name)
         desc = (n.get("description") or "").strip()
         db.execute(
@@ -204,9 +204,24 @@ def upsert(db: sqlite3.Connection, batch: dict, origin_id: int, vocab: dict) -> 
             " ON CONFLICT(id) DO UPDATE SET updated=excluded.updated,"
             "  description=CASE WHEN excluded.description != '' THEN excluded.description ELSE description END",
             (eid, name, normalise(name), type_, desc, n.get("scope") or default_scope, origin_id, now, now))
-        local[normalise(name)] = eid
         stored_name, stored_desc = db.execute("SELECT name, description FROM entities WHERE id=?", (eid,)).fetchone()
         terms.index_entity(db, eid, stored_name, stored_desc)
+        return eid
+
+    for n in batch.get("nodes", []):
+        name, type_ = (n.get("name") or "").strip(), n.get("type")
+        if not name or type_ not in vocab["types"]:
+            report["dropped"].append(f"node {name!r}: type {type_!r} not in vocabulary")
+            continue
+        # The same name already in memory as another type is the same thing, named again with a different guess at
+        # its type: reuse it, so its facts are not split over two nodes. Only if a fact here needs this type is a
+        # node of this type made after all (see `fits` below).
+        other = [r[0] for r in db.execute("SELECT id FROM entities WHERE norm=? AND type!=?", (normalise(name), type_))]
+        if len(other) == 1 and not db.execute("SELECT 1 FROM entities WHERE id=?", (entity_id(type_, name),)).fetchone():
+            local[normalise(name)] = other[0]
+            held[normalise(name)] = n
+        else:
+            local[normalise(name)] = put(n)
         report["nodes"] += 1
 
     def resolve(name: str) -> str | None:
@@ -229,8 +244,22 @@ def upsert(db: sqlite3.Connection, batch: dict, origin_id: int, vocab: dict) -> 
             report["dropped"].append(f"edge {e.get('source')!r} {p!r} itself: a node linked to itself says nothing")
             continue
         sources, targets = signature(p, vocab["predicates"][p], vocab["types"])
+
+        def fits(a, b):
+            return not ((sources and type_of(a) not in sources) or (targets and type_of(b) not in targets))
+
+        def fits_with(side, type_):  # would the fact fit with this side's node of type_ instead?
+            st_, tt_ = (type_, type_of(t)) if side == "source" else (type_of(s), type_)
+            return not ((sources and st_ not in sources) or (targets and tt_ not in targets))
+
+        for side in ("source", "target"):  # a stand-in node whose type this fact rules out: make the node as given
+            k = normalise(e.get(side) or "")
+            if not fits(s, t) and k in held and fits_with(side, held[k]["type"]):
+                made = put(held.pop(k))
+                local[k] = made
+                s, t = (made, t) if side == "source" else (s, made)
         st, tt = type_of(s), type_of(t)
-        if (sources and st not in sources) or (targets and tt not in targets):
+        if not fits(s, t):
             report["dropped"].append(f"edge {e.get('source')!r} ({st}) {p!r} {e.get('target')!r} ({tt}):"
                                      f" {p} links {vocab['predicates'][p]!r}")
             continue
@@ -255,6 +284,59 @@ def upsert(db: sqlite3.Connection, batch: dict, origin_id: int, vocab: dict) -> 
 
     db.commit()
     return report
+
+
+def merge_duplicates(db: sqlite3.Connection, vocab: dict) -> dict:
+    """Join nodes that share a name but not a type (one thing saved twice under different guesses at its type), so
+    recall finds all its facts. The type kept is the one under which the most of their facts still fit the
+    vocabulary; a pair where any fact would not fit is left alone and listed. Facts keep their sources (rule 5)."""
+    merged, left = [], []
+    for (norm,) in db.execute("SELECT norm FROM entities GROUP BY norm HAVING COUNT(DISTINCT type) > 1").fetchall():
+        group = db.execute("SELECT id, name, type, description FROM entities WHERE norm=? ORDER BY created", (norm,)).fetchall()
+        ids = [g[0] for g in group]
+        marks = ",".join("?" * len(ids))
+        rels = db.execute(f"SELECT source_id, predicate, target_id FROM relations"  # noqa: S608
+                          f" WHERE retired IS NULL AND (source_id IN ({marks}) OR target_id IN ({marks}))",
+                          ids + ids).fetchall()  # live facts decide; retired ones are history and just move along
+
+        def fits_as(keep_type):
+            ok = 0
+            for s, p, t in rels:
+                if p not in vocab["predicates"]:
+                    return -1
+                srcs, tgts = signature(p, vocab["predicates"][p], vocab["types"])
+                st = keep_type if s in ids else db.execute("SELECT type FROM entities WHERE id=?", (s,)).fetchone()[0]
+                tt = keep_type if t in ids else db.execute("SELECT type FROM entities WHERE id=?", (t,)).fetchone()[0]
+                if (srcs and st not in srcs) or (tgts and tt not in tgts) or (s in ids and t in ids):
+                    return -1
+                ok += 1
+            return ok
+
+        best = max(group, key=lambda g: (fits_as(g[2]), -group.index(g)))
+        if fits_as(best[2]) < 0:
+            left.append(best[1])
+            continue
+        keep = best[0]
+        for drop, _name, _type, desc in group:
+            if drop == keep:
+                continue
+            for s, p, t, o, c, r in db.execute("SELECT source_id, predicate, target_id, origin_id, created, retired"
+                                                " FROM relations WHERE source_id=? OR target_id=?", (drop, drop)).fetchall():
+                ns, nt = (keep if s == drop else s), (keep if t == drop else t)
+                db.execute("DELETE FROM relations WHERE source_id=? AND predicate=? AND target_id=? AND origin_id=?",
+                           (s, p, t, o))
+                db.execute("INSERT OR IGNORE INTO relations(source_id, predicate, target_id, origin_id, created, retired)"
+                           " VALUES (?,?,?,?,?,?)", (ns, p, nt, o, c, r))
+            db.execute("UPDATE OR IGNORE aliases SET entity_id=? WHERE entity_id=?", (keep, drop))
+            db.execute("UPDATE entities SET description=? WHERE id=? AND description=''", (desc, keep))
+            db.execute("DELETE FROM aliases WHERE entity_id=?", (drop,))
+            db.execute("DELETE FROM terms WHERE entity_id=?", (drop,))
+            db.execute("DELETE FROM entities WHERE id=?", (drop,))
+        row = db.execute("SELECT name, description FROM entities WHERE id=?", (keep,)).fetchone()
+        terms.index_entity(db, keep, row[0], row[1])
+        merged.append(f"{best[1]} ({best[2]})")
+    db.commit()
+    return {"merged": merged, "left": left}
 
 
 def retire(db: sqlite3.Connection, source: str, predicate: str, target: str) -> int:
@@ -307,6 +389,7 @@ def main(argv=None) -> int:
     ld.add_argument("--vocab", action="append", default=[])
     fo = sub.add_parser("forget-origin")
     fo.add_argument("id", type=int)
+    sub.add_parser("merge")
     rn = sub.add_parser("rename")
     rn.add_argument("session")
     rn.add_argument("title", nargs="+")
@@ -322,6 +405,10 @@ def main(argv=None) -> int:
         out["origin"] = oid
     elif args.cmd == "forget-origin":
         out = forget_origin(db, args.id)
+    elif args.cmd == "merge":
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import capture  # the vocabulary in force (core plus feeders'), read where capture reads it
+        out = merge_duplicates(db, capture.active_vocabulary())
     elif args.cmd == "rename":
         found = find_session(db, args.session)
         if not found:

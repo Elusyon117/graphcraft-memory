@@ -72,7 +72,9 @@ the advice is), so "it crashed at the campfire" brings them back. See `docs/DESI
 
 Claude also gets two tools: `memory_search` digs further than the automatic recall (by name, or by words when nothing
 is named exactly), and `memory_remember` saves a decision, fix or preference the moment it is settled, under the
-current session, so `/graph-memory-undo` takes it back out like any capture. Settings: `capture` (on/off) and `extractModel`
+current session, so `/graph-memory-undo` takes it back out like any capture. Recall stays in one small process for
+the session (a few ms a prompt). Settings: `capture` (on/off), `captureEvery` (also learn after every this many of
+your messages, default 8; 0 for only at the end) and `extractModel`
 (`haiku`/`sonnet`).
 
 Needs Python 3 (standard library only).

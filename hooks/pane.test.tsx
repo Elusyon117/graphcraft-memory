@@ -40,7 +40,10 @@ function engine(on: Parameters<Parameters<typeof test>[1]>[1], calls: string[][]
   on('tool.register', (_, e) => ({ value: { tool: `mcp__graphcraft-memory__${e.name}` } }))
   on('session.id', () => ({ value: 'sess-1' }))
   on('env.get', () => ({ value: undefined }))
-  on('fs.write', () => ({ value: undefined }))
+  on('fs.write', (_, e) => {
+    calls.push(['write', e.path])
+    return { value: undefined }
+  })
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('prompt.submit', (_, e) => {
@@ -272,4 +275,62 @@ test('/graph-export and /graph-import carry memory between PCs', { options: { ca
   expect(merged.text).toContain('+5 facts')
   expect(merged.text).toContain('1 fact retired as on the other PC')
   expect((await $.command.run({ command: 'graph-import', args: '' } as never)).text).toContain('Usage')
+})
+
+test('recall goes through the warm process once it is up, and falls back to recall.py when it is not', { options: { capture: false } }, async ($, on) => {
+  const calls: string[][] = []
+  engine(on, calls)
+  const asked: { url: string; token?: string }[] = []
+  let answering = true
+  on('process.spawn', async function* (_, e) {
+    calls.push(['spawn', ...e.argv])
+    yield { stream: 'stdout' as const, text: '{"port": 45678}\n' }
+    await new Promise(() => undefined) // runs for the session
+    return { code: 0, signal: null }
+  })
+  on('http.fetch', (_, e) => {
+    asked.push({ url: e.url, token: e.init?.headers?.['X-Token'] })
+    if (!answering) throw new Error('connection refused')
+    return { value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ ...RECALL, summary: 'memory: 1 facts, 3 ms' }) } }
+  })
+  await $.session.start({ cwd: 'C:/mods/Campfires', surface: 'terminal', isInteractive: true })
+  await new Promise(done => setTimeout(done, 20)) // the port line arrives
+  expect(calls.some(c => c[0] === 'spawn' && c.join(' ').includes('serve.py'))).toBe(true)
+
+  const before = calls.filter(c => c.join(' ').includes('recall.py')).length
+  await $.prompt.submit({ text: 'why did Campfires crash?' })
+  expect(asked[0]?.url).toBe('http://127.0.0.1:45678/recall')
+  expect(asked[0]?.token?.length).toBeGreaterThan(20)
+  expect(calls.filter(c => c.join(' ').includes('recall.py')).length).toBe(before) // no cold run
+
+  answering = false
+  await $.prompt.submit({ text: 'why did Campfires crash again?' })
+  expect(calls.filter(c => c.join(' ').includes('recall.py')).length).toBe(before + 1) // fell back
+})
+
+test('every captureEvery messages, the new part of the conversation is read during the session', { options: { captureEvery: 3 } }, async ($, on) => {
+  const calls: string[][] = []
+  engine(on, calls)
+  const writes = { some: (f: (w: string) => boolean) => calls.some(c => c[0] === 'write' && f(c[1] ?? '')),
+    filter: (f: (w: string) => boolean) => calls.filter(c => c[0] === 'write' && f(c[1] ?? '')) }
+  let users = 0
+  on('turn.complete', () => ({ text: 'ok' }))
+  on('session.messages', () => ({
+    value: Array.from({ length: users }, (_, i) => [{ role: 'user', text: `message ${i}` }, { role: 'assistant', text: 'ok' }]).flat(),
+  }))
+  await $.session.start({ cwd: 'C:/mods/Campfires', surface: 'terminal', isInteractive: true })
+  const turn = async () => {
+    users += 1
+    await $.turn.complete({ reason: 'answer', answer: 'ok', durationMs: 1, isAborted: false, turnId: `t${users}` } as never)
+    await new Promise(done => setTimeout(done, 20)) // the save runs after the turn
+  }
+  await turn()
+  await turn()
+  expect(writes.some(w => /[\\/]pending[\\/]/.test(w))).toBe(false)
+  await turn() // the third message of the person's
+  expect(writes.some(w => /[\\/]pending[\\/]/.test(w))).toBe(true)
+  expect(calls.some(c => c.join(' ').includes('capture.py pending'))).toBe(true)
+  const queued = writes.filter(w => /[\\/]pending[\\/]/.test(w)).length
+  await turn()
+  expect(writes.filter(w => /[\\/]pending[\\/]/.test(w)).length).toBe(queued) // not again until three more
 })
