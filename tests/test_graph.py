@@ -59,6 +59,26 @@ class GraphTest(unittest.TestCase):
         self.assertIsNone(self.db.execute("SELECT 1 FROM entities WHERE name='X'").fetchone())
         self.assertIsNone(self.db.execute("SELECT 1 FROM relations WHERE predicate='loves'").fetchone())
 
+    def test_signature_is_read_from_the_description(self):
+        types = VOCAB["types"]
+        self.assertEqual(store.signature("because", VOCAB["predicates"]["because"], types),
+                         ({"DECISION"}, {"PROBLEM", "CONCEPT", "PREFERENCE"}))
+        self.assertEqual(store.signature("part_of", VOCAB["predicates"]["part_of"], types), (set(), set()))
+        self.assertEqual(store.signature("avoids", VOCAB["predicates"]["avoids"], types), ({"PERSON", "PROJECT"}, set()))
+
+    def test_edge_between_wrong_types_is_dropped(self):
+        rep = store.upsert(self.db, {
+            "nodes": [{"name": "Zone Kit", "type": "TOOL"}, {"name": "Crash", "type": "PROBLEM"},
+                      {"name": "Use layers", "type": "DECISION"}],
+            "edges": [{"source": "Zone Kit", "predicate": "about", "target": "Crash"},            # TOOL can't be about
+                      {"source": "Use layers", "predicate": "because", "target": "Zone Kit"},     # a TOOL is no reason
+                      {"source": "Use layers", "predicate": "because", "target": "Crash"},        # fine
+                      {"source": "Crash", "predicate": "fixed_by", "target": "Use layers"}]},     # fine
+            self.origin, VOCAB)
+        self.assertEqual(rep["edges"], 2)
+        self.assertEqual(len(rep["dropped"]), 2)
+        self.assertIn("(TOOL) 'about'", rep["dropped"][0])
+
     def test_core_only_vocabulary_drops_feeder_types(self):
         db = store.connect(Path(self.tmp.name) / "core.db")
         rep = store.upsert(db, FIXTURE, store.add_origin(db, "file", "f"), store.load_vocabulary())
@@ -122,13 +142,13 @@ class GraphTest(unittest.TestCase):
         a = store.add_origin(self.db, "session", "a", project="C:/work/elsewhere")
         b = store.add_origin(self.db, "session", "b", project="C:/mods/Campfires")
         store.upsert(self.db, {"nodes": [{"name": "Campfires", "type": "MOD"}, {"name": "Elsewhere Note", "type": "CONCEPT"}],
-                               "edges": [{"source": "Campfires", "predicate": "about", "target": "Elsewhere Note"}]},
+                               "edges": [{"source": "Campfires", "predicate": "tried", "target": "Elsewhere Note"}]},
                      a, VOCAB)
         store.upsert(self.db, {"nodes": [{"name": "Campfires", "type": "MOD"}, {"name": "Here Note", "type": "CONCEPT"}],
-                               "edges": [{"source": "Campfires", "predicate": "about", "target": "Here Note"}]},
+                               "edges": [{"source": "Campfires", "predicate": "tried", "target": "Here Note"}]},
                      b, VOCAB)
         targets = [t["target"] for t in self.ask("Campfires", cwd="C:/mods/Campfires", hops=1)["triples"]
-                   if t["predicate"] == "about"]
+                   if t["predicate"] == "tried"]
         self.assertLess(targets.index("Here Note"), targets.index("Elsewhere Note"))
 
     def test_output_stays_within_budget(self):

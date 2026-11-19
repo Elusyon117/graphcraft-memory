@@ -63,7 +63,8 @@ Later: a meaning-based seed (local embeddings) for prompts that name nothing exa
   redacts secrets, keeps the newest 24,000 characters, and builds the prompt (`graph/extract_prompt.md`) with the
   vocabulary in force and the names already in memory, so the model reuses them. The mod makes one
   `$.model.complete` call (`extractModel`, default `haiku`).
-- **Check and store:** `apply` reads the JSON in the reply; unknown types or predicates and self-links are dropped and
+- **Check and store:** `apply` reads the JSON in the reply; unknown types or predicates, self-links, and links whose
+  ends are not the types the predicate's description names ("DECISION because PROBLEM, ...") are dropped and
   logged, never stored. Facts are upserted with `origin = session:<id>` and the project folder; nodes marked
   `"scope": "global"` (most preferences) stay global, the rest belong to the project. `retire` entries mark old facts
   no longer true.

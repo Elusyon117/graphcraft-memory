@@ -117,6 +117,25 @@ class CaptureTest(unittest.TestCase):
         self.assertEqual(scopes["Short answers"], "global")
         self.assertEqual(scopes["Zone Kit"], PROJECT)
 
+    def test_type_word_is_stripped_from_names_and_links_follow(self):
+        text = json.dumps({
+            "nodes": [{"name": "Campfires", "type": "PROJECT"}, {"name": "Linked layer decision", "type": "DECISION"},
+                      {"name": "Swap crash problem", "type": "PROBLEM"}, {"name": "Problem", "type": "PROBLEM"}],
+            "edges": [{"source": "Campfires", "predicate": "decided", "target": "Linked layer decision"},
+                      {"source": "Linked layer decision", "predicate": "because", "target": "Swap crash problem"}],
+            "aliases": [{"entity": "Swap crash problem", "alias": "the crash"}]})
+        out = self.run_job(conversation(3), text=text)
+        self.assertEqual((out["facts"], out["dropped"]), (2, []))
+        with closing(store.connect()) as db:
+            names = {r[0] for r in db.execute("SELECT name FROM entities")}
+        self.assertEqual(names, {"Campfires", "Linked layer", "Swap crash", "Problem"})  # a bare type word stays
+
+    def test_prompt_states_link_rules_and_what_to_leave_out(self):
+        system = capture.prepare(self.job(conversation(3)))["system"]
+        self.assertIn("Never add the type to the", system)
+        self.assertIn("a plan is not a dependency", system)
+        self.assertIn("DECISION because PROBLEM, CONCEPT or PREFERENCE", system)
+
     def test_apply_cleans_up_queue_and_reply(self):
         file = capture.claim(self.job(conversation(3)))["claimed"]
         reply = self.reply()

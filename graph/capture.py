@@ -152,6 +152,28 @@ def parse_reply(text: str) -> dict:
     return batch
 
 
+def strip_type_words(batch: dict) -> dict:
+    """'Draft capture decision' (DECISION) becomes 'Draft capture': the type is already on the node, and the extra word
+    would split it from the same thing named plainly in another session. Edges, aliases and retires follow the rename."""
+    renamed = {}
+    for n in batch.get("nodes", []):
+        name, type_ = (n.get("name") or "").strip(), str(n.get("type") or "")
+        word = " " + type_.lower().replace("_", " ")
+        if type_ and name.lower().endswith(word) and len(name) > len(word):
+            renamed[store.normalise(name)] = n["name"] = name[:-len(word)].rstrip(" -:")
+
+    def fix(name):
+        return renamed.get(store.normalise(name or ""), name)
+
+    for e in batch.get("edges", []) + batch.get("retire", []):
+        if isinstance(e, dict):
+            e["source"], e["target"] = fix(e.get("source")), fix(e.get("target"))
+    for a in batch.get("aliases", []):
+        if isinstance(a, dict):
+            a["entity"] = fix(a.get("entity"))
+    return batch
+
+
 def apply(file: str, reply_file: str) -> dict:
     job = _read(file)
     project = job.get("project", "")
@@ -159,6 +181,7 @@ def apply(file: str, reply_file: str) -> dict:
         batch = parse_reply(Path(reply_file).read_text(encoding="utf-8-sig"))
     finally:
         Path(reply_file).unlink(missing_ok=True)
+    batch = strip_type_words(batch)
     batch["scope"] = project or "global"
     for n in batch.get("nodes", []):
         if n.get("scope") != "global":

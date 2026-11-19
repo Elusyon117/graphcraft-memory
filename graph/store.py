@@ -84,6 +84,19 @@ def load_vocabulary(extra: list | None = None) -> dict:
     return {"types": types, "predicates": predicates}
 
 
+def signature(predicate: str, text: str, types) -> tuple:
+    """(source types, target types) read from a predicate's description, e.g. "PROJECT or PERSON uses TOOL".
+
+    The vocabulary types named before the predicate word are the allowed sources, those after it the allowed targets;
+    a side that names none ("something", "another thing") takes any type. So a description doubles as the rule.
+    """
+    words = re.findall(r"[A-Za-z_]+", text)
+    if predicate not in words:
+        return frozenset(), frozenset()
+    i = words.index(predicate)
+    return (frozenset(w for w in words[:i] if w in types), frozenset(w for w in words[i + 1:] if w in types))
+
+
 def connect(path: Path | None = None, create: bool = True) -> sqlite3.Connection | None:
     path = path or db_path()
     if not path.exists():
@@ -136,6 +149,10 @@ def upsert(db: sqlite3.Connection, batch: dict, origin_id: int, vocab: dict) -> 
     def resolve(name: str) -> str | None:
         return local.get(normalise(name or "")) or _find_by_name(db, name or "")
 
+    def type_of(eid: str) -> str:
+        row = db.execute("SELECT type FROM entities WHERE id=?", (eid,)).fetchone()
+        return row[0] if row else ""
+
     for e in batch.get("edges", []):
         p = e.get("predicate")
         if p not in vocab["predicates"]:
@@ -147,6 +164,12 @@ def upsert(db: sqlite3.Connection, batch: dict, origin_id: int, vocab: dict) -> 
             continue
         if s == t:
             report["dropped"].append(f"edge {e.get('source')!r} {p!r} itself: a node linked to itself says nothing")
+            continue
+        sources, targets = signature(p, vocab["predicates"][p], vocab["types"])
+        st, tt = type_of(s), type_of(t)
+        if (sources and st not in sources) or (targets and tt not in targets):
+            report["dropped"].append(f"edge {e.get('source')!r} ({st}) {p!r} {e.get('target')!r} ({tt}):"
+                                     f" {p} links {vocab['predicates'][p]!r}")
             continue
         db.execute("INSERT OR IGNORE INTO relations(source_id, predicate, target_id, origin_id, created)"
                    " VALUES (?,?,?,?,?)", (s, p, t, origin_id, now))
