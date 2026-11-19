@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <img alt="version" src="https://img.shields.io/badge/version-0.16.1-7F77DD">
+  <img alt="version" src="https://img.shields.io/badge/version-0.16.2-7F77DD">
   <img alt="Claude Code plugin" src="https://img.shields.io/badge/Claude%20Code-plugin-1D9E75">
   <img alt="Python standard library only" src="https://img.shields.io/badge/python-stdlib%20only-378ADD">
   <img alt="offline" src="https://img.shields.io/badge/memory-stays%20on%20your%20PC-888780">

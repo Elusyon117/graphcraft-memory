@@ -268,13 +268,28 @@ def prepare(file: str, cwd: str) -> dict:
     return {"system": system, "prompt": f'<document path="{_title(path, root)}">\n{body}\n</document>'}
 
 
+def settled_problems(batch: dict) -> dict:
+    """A doc describes the design as it is: a decision made `because` of a PROBLEM is how that problem is handled, so
+    each such problem gets `fixed_by` that decision (unless the doc already gave it one). Without it, the pane lists
+    "AppData split memory" as open when the doc is explaining why it never happens."""
+    types = {store.normalise(n.get("name", "")): n.get("type") for n in batch.get("nodes", []) if isinstance(n, dict)}
+    edges = [e for e in batch.get("edges", []) if isinstance(e, dict)]
+    has_fix = {store.normalise(e.get("source", "")) for e in edges if e.get("predicate") == "fixed_by"}
+    for e in list(edges):
+        problem = store.normalise(e.get("target", ""))
+        if e.get("predicate") == "because" and types.get(problem) == "PROBLEM" and problem not in has_fix:
+            batch["edges"].append({"source": e["target"], "predicate": "fixed_by", "target": e["source"]})
+            has_fix.add(problem)
+    return batch
+
+
 def apply(file: str, reply_file: str, cwd: str) -> dict:
     path, root = Path(file).resolve(), Path(cwd).resolve()
     try:
         batch = capture.parse_reply(Path(reply_file).read_text(encoding="utf-8-sig"))
     finally:
         Path(reply_file).unlink(missing_ok=True)
-    batch = capture.strip_type_words(batch)
+    batch = settled_problems(capture.strip_type_words(batch))
     batch.pop("retire", None)
     for n in batch.get("nodes", []):
         if isinstance(n, dict) and n.get("scope") != "global":

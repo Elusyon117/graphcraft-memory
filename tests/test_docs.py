@@ -115,6 +115,18 @@ class DocsTest(unittest.TestCase):
         self.assertNotIn("conversation", p.lower())
         self.assertNotIn('list it under "retire"', p)
 
+    def test_a_problem_a_decision_exists_because_of_is_not_open(self):
+        batch = docs.settled_problems({
+            "nodes": [{"name": "Graph under .claude", "type": "DECISION"}, {"name": "AppData split", "type": "PROBLEM"},
+                      {"name": "Slow start", "type": "PROBLEM"}, {"name": "Warm process", "type": "DECISION"},
+                      {"name": "Swap crash", "type": "CONCEPT"}],
+            "edges": [{"source": "Graph under .claude", "predicate": "because", "target": "AppData split"},
+                      {"source": "Warm process", "predicate": "because", "target": "Slow start"},
+                      {"source": "Slow start", "predicate": "fixed_by", "target": "Warm process"},
+                      {"source": "Warm process", "predicate": "because", "target": "Swap crash"}]})
+        fixes = [(e["source"], e["target"]) for e in batch["edges"] if e["predicate"] == "fixed_by"]
+        self.assertEqual(fixes, [("Slow start", "Warm process"), ("AppData split", "Graph under .claude")])
+
 
 if __name__ == "__main__":
     unittest.main()
