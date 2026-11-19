@@ -310,6 +310,12 @@ def main(argv=None) -> int:
                else apply(args.file, args.reply, args.cwd))
     except Exception as e:  # one JSON answer either way, so the mod can show it
         out = {"error": f"{type(e).__name__}: {e}"}
+    if "error" in out:  # kept where /graph-memory and a later look can find it, not only in a debug log
+        try:
+            capture._log({"event": "doc-failed", "step": args.cmd, "file": getattr(args, "file", ""),  # noqa: SLF001
+                          "error": out["error"][:500]})
+        except OSError:
+            pass
     print(json.dumps(out))
     return 0
 

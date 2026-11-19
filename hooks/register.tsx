@@ -247,6 +247,8 @@ async function learnDocs($: Engine, model: string, useModel: boolean): Promise<v
   const cwd = await $.session.cwd()
   let facts = 0
   let read = 0
+  const failed: string[] = []
+  const name = (file: string) => file.split(/[\\/]/).pop() ?? file
   try {
     const scan = await runPy($, 'docs.py', ['scan', '--cwd', cwd], CAPTURE_TIMEOUT_MS)
     if (!scan || typeof scan.error === 'string') {
@@ -259,14 +261,20 @@ async function learnDocs($: Engine, model: string, useModel: boolean): Promise<v
     const jobs = useModel && Array.isArray(scan.jobs) ? (scan.jobs as string[]) : []
     for (const file of jobs) {
       const prep = await runPy($, 'docs.py', ['prepare', file, '--cwd', cwd], CAPTURE_TIMEOUT_MS)
-      if (!prep || typeof prep.error === 'string') continue
+      if (!prep || typeof prep.error === 'string') {
+        failed.push(`${name(file)}: ${String(prep?.error ?? 'prepare gave no answer')}`)
+        continue
+      }
       const reply = await $.model.complete({ model, system: String(prep.system), prompt: String(prep.prompt), maxTokens: EXTRACT_MAX_TOKENS })
-      if (!reply.isAnswered) continue // the doc stays unread and is tried at the next session start
+      if (!reply.isAnswered) {
+        failed.push(`${name(file)}: model ${reply.reason}`) // the doc stays unread and is tried at the next session start
+        continue
+      }
       const replyFile = `${await dataDir($)}/tmp/doc-${Date.now()}.reply.txt`
       await $.fs.write(replyFile, reply.text)
       const applied = await runPy($, 'docs.py', ['apply', file, replyFile, '--cwd', cwd], CAPTURE_TIMEOUT_MS)
       if (!applied || typeof applied.error === 'string') {
-        $.ui.log(`graphcraft-memory: docs: ${file}: ${String(applied?.error ?? 'apply failed')}`, { to: 'debug' })
+        failed.push(`${name(file)}: ${String(applied?.error ?? 'apply gave no answer')}`)
         continue
       }
       facts += Number(applied.facts ?? 0)
@@ -276,6 +284,8 @@ async function learnDocs($: Engine, model: string, useModel: boolean): Promise<v
     $.ui.log(`graphcraft-memory: docs stopped: ${String(err).slice(0, 300)}`, { to: 'debug' })
   }
   if (facts > 0) $.ui.toast(`memory: +${plural(facts, 'fact')} from ${plural(read, 'project doc')}`)
+  for (const f of failed) $.ui.log(`graphcraft-memory: docs: ${f}`, { to: 'debug' })
+  if (failed.length > 0) $.ui.toast(`memory: could not read ${failed[0].slice(0, 160)}${failed.length > 1 ? ` (+${failed.length - 1} more)` : ''}; tried again next session`)
 }
 
 async function memoryReport($: Engine): Promise<string> {
@@ -635,6 +645,8 @@ export const register: Register = (on, options) => {
       if (Array.isArray(merged?.merged) && merged.merged.length > 0)
         $.ui.log(`graphcraft-memory: joined duplicate nodes: ${(merged.merged as string[]).join(', ')}`, { to: 'debug' })
       // Names that differ but likely mean one thing: offered in the pane, joined only when the person says so.
+      // A new session starts without the last merge's Undo line (it outlives a restart; /graph-merge undo still works).
+      await update($, dupes, () => null)
       await loadDupes($)
     })().catch(err => $.ui.log(`graphcraft-memory: session start: ${String(err).slice(0, 200)}`, { to: 'debug' }))
     return started

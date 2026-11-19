@@ -479,3 +479,13 @@ test('capture off: front-matter is still read, but no doc goes to the model', { 
   expect(calls.some(c => c.join(' ').includes('docs.py scan'))).toBe(true)
   expect(calls.some(c => c.join(' ').includes('docs.py prepare'))).toBe(false)
 })
+
+test('a doc that fails to read says why in a toast', { options: { captureEvery: 0 } }, async ($, on) => {
+  const calls: string[][] = []
+  engine(on, calls)
+  on('model.complete', () => ({ value: { isAnswered: false, reason: 'aborted', usage: {} } as never }))
+  await $.session.start({ cwd: 'C:/mods/Campfires', surface: 'terminal', isInteractive: true })
+  await new Promise(done => setTimeout(done, 30))
+  expect(calls.some(c => c.join(' ').includes('docs.py apply'))).toBe(false)
+  expect(calls.some(c => c[0] === 'toast' && c[1]!.includes('could not read CLAUDE.md: model aborted'))).toBe(true)
+})
