@@ -56,8 +56,12 @@ browser (structured or free layout, a "Why chains" filter, click a node for its 
 the chat: the facts used for your last prompt (Forget), what the last session taught it (Keep, Drop, Undo session) and
 this project's problems; close it and `/graph-pane` brings it back. Clawd sits in the corner with a memory bubble: when
 facts were recalled, a little graph builds itself in it as recall walks the links. With the clawd-pet mod installed,
-Clawd himself uses that mod's frames (read from your install, never copied here); without it, a stand-in Clawd. A one-line brief of the project sits above the prompt
-until your first message. Settings: `capture` (on/off) and `extractModel`
+Clawd himself uses that mod's frames (read from your install, never copied here); without it, a stand-in Clawd. A
+one-line brief of the project sits above the prompt until your first message.
+
+Claude also gets two tools: `memory_search` digs further than the automatic recall (by name, or by words when nothing
+is named exactly), and `memory_remember` saves a decision, fix or preference the moment it is settled, under the
+current session, so `/graph-memory-undo` takes it back out like any capture. Settings: `capture` (on/off) and `extractModel`
 (`haiku`/`sonnet`).
 
 Needs Python 3 (standard library only).

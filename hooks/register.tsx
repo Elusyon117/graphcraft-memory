@@ -173,12 +173,67 @@ async function memoryReport($: Engine): Promise<string> {
   for (const c of captures) {
     const when = new Date(Number(c.at ?? 0) * 1000).toLocaleString()
     const sid = String(c.sessionId ?? '').slice(0, 8)
-    if (c.event === 'applied')
-      lines.push(`  ${when}  +${plural(Number(c.facts ?? 0), 'fact')}  session ${sid}  ${String(c.project ?? '')}`)
+    if (c.event === 'applied' || c.event === 'remembered')
+      lines.push(
+        `  ${when}  +${plural(Number(c.facts ?? 0), 'fact')}${c.event === 'remembered' ? ' remembered' : ''}` +
+          `  session ${sid}  ${String(c.project ?? '')}`,
+      )
     else lines.push(`  ${when}  ${String(c.event)}  session ${sid}  ${String(c.reason ?? '')}`)
   }
   lines.push('', 'Take a session back out with /graph-memory-undo (the last one) or /graph-memory-undo <session id>.')
   return lines.join('\n')
+}
+
+const SEARCH_TOOL = 'mcp__graphcraft-memory__memory_search'
+const REMEMBER_TOOL = 'mcp__graphcraft-memory__memory_remember'
+type Vocab = { types: Record<string, string>; predicates: Record<string, string> }
+
+async function registerRemember($: Engine, vocab: Vocab): Promise<void> {
+  const types = Object.entries(vocab.types).map(([k, v]) => `${k}: ${v}`).join('\n')
+  const predicates = Object.values(vocab.predicates).join('\n')
+  const node = {
+    type: 'object',
+    properties: {
+      name: { type: 'string', description: 'Full name, without the type word ("Linked layer", not "Linked layer decision")' },
+      type: { type: 'string', enum: Object.keys(vocab.types) },
+      description: { type: 'string', description: 'One short sentence: conditions, numbers, dates, the reason' },
+      scope: { type: 'string', enum: ['global'], description: 'Only when it holds in every project (most preferences)' },
+    },
+    required: ['name', 'type'],
+    additionalProperties: false,
+  }
+  const edge = {
+    type: 'object',
+    properties: {
+      source: { type: 'string' },
+      predicate: { type: 'string', enum: Object.keys(vocab.predicates) },
+      target: { type: 'string' },
+    },
+    required: ['source', 'predicate', 'target'],
+    additionalProperties: false,
+  }
+  await $.tool.register({
+    name: 'memory_remember',
+    description:
+      "Save facts to the user's knowledge-graph memory the moment they are settled, so later sessions know them: " +
+      'a decision and its reason, a problem and what fixed it (or that it is still open), a preference about how ' +
+      'to work, what a project uses or is made of. Not for chores (commits, releases, test runs), plans that will ' +
+      'change, or what memory already holds. Link the current project by its folder name as a PROJECT node; call ' +
+      'the person "User" (PERSON). Every edge must read as a true sentence "source predicate target" with the types ' +
+      'the predicate allows; anything else is dropped and reported back. Use retire for facts that are no longer ' +
+      `true. At most 15 edges.\n\nTypes:\n${types}\n\nPredicates (source predicate target):\n${predicates}`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        nodes: { type: 'array', items: node, description: 'Every node an edge names, unless memory already has it' },
+        edges: { type: 'array', items: edge, maxItems: 15 },
+        retire: { type: 'array', items: edge, description: 'Facts that are no longer true' },
+      },
+      required: ['nodes', 'edges'],
+      additionalProperties: false,
+    },
+    isDeferred: false,
+  })
 }
 
 const factKey = (f: PaneFact) => `${f.source_id}|${f.predicate}|${f.target_id}`
@@ -267,9 +322,31 @@ export const register: Register = (on, options) => {
       description: 'graphcraft-memory: open the memory map in your browser (optionally: a project name)',
     })
     await $.command.register({ name: 'graph-pane', description: 'graphcraft-memory: open the Memory pane' })
+    await $.tool.register({
+      name: 'memory_search',
+      description:
+        "Search the user's knowledge-graph memory (facts from earlier sessions and installed mods: projects, " +
+        'decisions and their reasons, problems and their fixes, preferences, tools). Facts linked to each prompt ' +
+        'already arrive as context; call this to dig further: something the user refers to from before, a name ' +
+        'that context did not cover, or more links around one thing. Returns "source --[predicate]--> target" ' +
+        'lines with where each came from, and short descriptions.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Names or words to look for, e.g. "post-process swap crash"' },
+          hops: { type: 'integer', minimum: 1, maximum: 3, description: 'How many links out to walk (default 2)' },
+        },
+        required: ['query'],
+        additionalProperties: false,
+      },
+      isDeferred: false,
+    })
     const started = await next(e)
     void (async () => {
       await refreshView($)
+      // memory_remember names the types and predicates in force (core plus feeders'), so it waits for Python.
+      const vocab = await runPy($, 'tools.py', ['vocab'], CAPTURE_TIMEOUT_MS)
+      if (vocab?.types && vocab.predicates) await registerRemember($, vocab as unknown as Vocab)
       // Clawd and his memory bubble (graph/clawd.py): the clawd-pet mod's frames when installed, else a stand-in.
       const art = await runPy($, 'clawd.py', ['svg'], CAPTURE_TIMEOUT_MS)
       if (art?.lit && art.idle) await update($, clawd, () => art as unknown as Clawd)
@@ -282,6 +359,36 @@ export const register: Register = (on, options) => {
     })().catch(err => $.ui.log(`graphcraft-memory: session start: ${String(err).slice(0, 200)}`, { to: 'debug' }))
     return started
   })
+
+  on('tool.call', { tool: SEARCH_TOOL }, async ($, e) => {
+    const input = e as unknown as { query?: unknown; hops?: unknown } // an MCP tool's arguments sit on e itself
+    const query = typeof input.query === 'string' ? input.query.trim().slice(0, MAX_PROMPT_CHARS) : ''
+    if (!query) return { result: 'Give a query: the names or words to look for.' }
+    const hops = typeof input.hops === 'number' ? String(Math.round(input.hops)) : '2'
+    const out = await runPy($, 'tools.py', ['search', '--cwd', await $.session.cwd(), '--hops', hops, '--', query], CAPTURE_TIMEOUT_MS)
+    if (!out) return { result: 'Memory could not be searched (is Python 3 installed?).' }
+    return { result: String(out.text ?? out.error ?? 'No answer from memory.') }
+  }).catch(() => ({ result: 'Memory could not be searched just now.' }))
+
+  on('tool.call', { tool: REMEMBER_TOOL }, async ($, e) => {
+    const input = e as unknown as { nodes?: unknown; edges?: unknown; retire?: unknown }
+    const batch = { nodes: input.nodes ?? [], edges: input.edges ?? [], retire: input.retire ?? [] }
+    const file = `${await dataDir($)}/tmp/remember-${Date.now()}.json`
+    await $.fs.write(file, JSON.stringify(batch))
+    const args = ['remember', file, '--session', await $.session.id(), '--project', await $.session.cwd()]
+    const out = await runPy($, 'tools.py', args, CAPTURE_TIMEOUT_MS)
+    if (!out || typeof out.error === 'string') return { result: `Nothing saved: ${String(out?.error ?? 'memory could not be reached')}.` }
+    const facts = Number(out.facts ?? 0)
+    const dropped = Array.isArray(out.dropped) ? (out.dropped as string[]) : []
+    const retired = Number(out.retired ?? 0)
+    if (facts > 0) $.ui.toast(`memory: +${plural(facts, 'fact')} remembered`)
+    void refreshView($).catch(() => undefined)
+    const lines = [`Saved ${plural(facts, 'fact')} (${plural(Number(out.nodes ?? 0), 'node')} added or updated).`]
+    if (retired > 0) lines.push(`Retired ${plural(retired, 'old fact')}.`)
+    if (dropped.length > 0) lines.push('Not saved:', ...dropped.map(d => `- ${d}`))
+    lines.push('The user can take them back out with /graph-memory-undo or the Memory pane.')
+    return { result: lines.join('\n') }
+  }).catch(() => ({ result: 'Nothing saved: memory could not be reached just now.' }))
 
   on('command.run', { command: 'graph-pane' }, async $ => {
     await $.store.delete('paneClosed')

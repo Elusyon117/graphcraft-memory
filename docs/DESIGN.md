@@ -50,6 +50,12 @@ Code would each see a different graph. Standard library only.
 
 Later: a meaning-based seed (local embeddings) for prompts that name nothing exactly ("that thing from yesterday").
 
+**Memory tools** (`graph/tools.py`, still no model): `memory_search` runs the same walk with a bigger budget (40
+facts), leaves the project node out so a targeted search stays targeted, and when no name or alias matches it seeds
+from the nodes whose names (else descriptions) hold the most words of the query. `memory_remember` takes a
+`{nodes, edges, retire}` batch Claude writes and applies capture's checks (vocabulary, link types, type words in
+names) under `origin = session:<id>`, so undo treats it as part of that session.
+
 ### 3. Capture (session digest)
 - **Draft and queue** (fast, no model): after every reply of the main conversation (`turn.complete`) the mod rewrites
   `<data>/drafts/<session>.json` with the user's and Claude's message text; tool calls and results never enter it.

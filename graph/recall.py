@@ -98,7 +98,9 @@ def _degree(db, eid: str) -> int:
                       (eid, eid)).fetchone()[0]
 
 
-def recall(prompt: str, cwd: str = "", hops: int = 2, db=None) -> dict:
+def recall(prompt: str, cwd: str = "", hops: int = 2, db=None, max_facts: int = MAX_FACTS, max_chars: int = MAX_CHARS,
+           seeds: set | None = None, with_project: bool = True) -> dict:
+    """The prompt hook's recall; memory_search passes bigger limits and, when it found seeds its own way, those."""
     t0 = time.perf_counter()
     empty = {"facts": 0, "ms": 0.0, "summary": "", "context": "", "triples": [], "matched": [], "more": 0}
     if db is None:
@@ -106,14 +108,15 @@ def recall(prompt: str, cwd: str = "", hops: int = 2, db=None) -> dict:
         if db is None:
             return empty
         with closing(db):
-            return recall(prompt, cwd, hops, db)
+            return recall(prompt, cwd, hops, db, max_facts, max_chars, seeds, with_project)
 
-    seeds = _ids_for(db, ngrams(prompt))
+    seeds = set(seeds) if seeds is not None else _ids_for(db, ngrams(prompt))
     if not seeds:  # nothing named: the project alone would only add noise
         empty["ms"] = (time.perf_counter() - t0) * 1000
         return empty
     named = sorted(seeds)
-    seeds |= project_seed(db, cwd)
+    if with_project:
+        seeds |= project_seed(db, cwd)
     depth = walk(db, seeds, hops)
     ids = list(depth)
 
@@ -144,9 +147,9 @@ def recall(prompt: str, cwd: str = "", hops: int = 2, db=None) -> dict:
         used |= {row[3], row[4]}
 
     lines, size = [], len(HEADER)
-    for t in triples[:MAX_FACTS]:
+    for t in triples[:max_facts]:
         line = f"{t['source']} --[{t['predicate']}]--> {t['target']}   ({t['origin']})"
-        if size + len(line) > MAX_CHARS:
+        if size + len(line) > max_chars:
             break
         lines.append(line)
         size += len(line) + 1
@@ -156,7 +159,7 @@ def recall(prompt: str, cwd: str = "", hops: int = 2, db=None) -> dict:
     notes = []
     for name, desc in db.execute(
             f"SELECT name, description FROM entities WHERE description != '' AND id IN ({marks})", ids):  # noqa: S608
-        if name in names and size + len(desc) < MAX_CHARS:
+        if name in names and size + len(desc) < max_chars:
             notes.append(f"  {name}: {desc}")
             size += len(name) + len(desc) + 4
 

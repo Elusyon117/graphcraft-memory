@@ -19,6 +19,8 @@ const RECALL = {
 const ART = (name: string) => ({ svg: `<svg xmlns="http://www.w3.org/2000/svg"><title>${name}</title></svg>`, width: 77, height: 64 })
 const CLAWD = { lit: ART('lit'), idle: ART('idle'), source: 'own' }
 
+const VOCAB = { types: { PROJECT: 'A folder', DECISION: 'A choice' }, predicates: { decided: 'PROJECT decided DECISION' } }
+
 const PANE = {
   plugin: 'graphcraft-memory',
   component: 'Pane',
@@ -35,6 +37,10 @@ const PANE = {
 
 function engine(on: Parameters<Parameters<typeof test>[1]>[1], calls: string[][]) {
   on('command.register', () => ({ value: undefined }))
+  on('tool.register', (_, e) => ({ value: { tool: `mcp__graphcraft-memory__${e.name}` } }))
+  on('session.id', () => ({ value: 'sess-1' }))
+  on('env.get', () => ({ value: undefined }))
+  on('fs.write', () => ({ value: undefined }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('prompt.submit', (_, e) => e)
@@ -54,6 +60,9 @@ function engine(on: Parameters<Parameters<typeof test>[1]>[1], calls: string[][]
     const argv = e.argv.join(' ')
     const out = argv.includes('--version') ? '' : argv.includes('recall.py') ? RECALL
       : argv.includes('clawd.py') ? CLAWD
+      : argv.includes('tools.py vocab') ? VOCAB
+      : argv.includes('tools.py search') ? { facts: 1, text: 'Memory facts linked to it: Campfires --[decided]--> Linked anim layer' }
+      : argv.includes('tools.py remember') ? { facts: 1, nodes: 2, retired: 0, dropped: ["edge 'X' (TOOL) 'about' 'Y'"] }
       : argv.includes('pane.py state') ? STATE : argv.includes('pane.py forget') ? { retired: 1 } : { files: [] }
     return {
       value: {
@@ -124,4 +133,29 @@ test('the brief shows above the prompt until the first message', { options: { ca
   const after = await $.ui.mount({ ...band, props: { hasSurvey: false, isCollapsed: false, isWorking: false, maxRows: 10 } } as never)
   expect(await after.find({ type: 'Text', text: /Last time in Campfires/ })).toBeFalsy()
   await after.unmount()
+})
+
+test('memory_search answers with what memory found', { options: { capture: false } }, async ($, on) => {
+  const calls: string[][] = []
+  engine(on, calls)
+  await $.session.start({ cwd: 'C:/mods/Campfires', surface: 'desktop', isInteractive: true })
+  const out = await $.tool.call({ tool: 'mcp__graphcraft-memory__memory_search', query: 'swap crash' } as never)
+  expect(JSON.stringify(out)).toContain('Linked anim layer')
+  const ran = calls.find(c => c.join(' ').includes('tools.py search'))
+  expect(ran?.slice(-2)).toEqual(['--', 'swap crash']) // the query goes after --, never read as an option
+})
+
+test('memory_remember saves under this session and reports what was dropped', { options: { capture: false } }, async ($, on) => {
+  const calls: string[][] = []
+  engine(on, calls)
+  await $.session.start({ cwd: 'C:/mods/Campfires', surface: 'desktop', isInteractive: true })
+  const out = await $.tool.call({
+    tool: 'mcp__graphcraft-memory__memory_remember',
+    nodes: [{ name: 'Campfires', type: 'PROJECT' }, { name: 'Linked layer', type: 'DECISION' }],
+    edges: [{ source: 'Campfires', predicate: 'decided', target: 'Linked layer' }],
+  } as never)
+  const text = JSON.stringify(out)
+  expect(text).toContain('Saved 1 fact')
+  expect(text).toContain('Not saved')
+  expect(calls.find(c => c.join(' ').includes('tools.py remember'))?.join(' ')).toContain('--session sess-1')
 })
