@@ -147,7 +147,7 @@ Update later with `claude plugin marketplace update elusyon-graphcraft-memory`, 
 | `/graph-memory` | What is remembered, and recent captures. |
 | `/graph-memory-undo [session id]` | Take a session's facts back out (default: the last one). |
 | `/graph-rename <session id or last> <name>` | Give a session your own name; later captures keep it. |
-| `/graph-merge [<name> into <name> | undo]` | List nodes likely saved twice under two names, join one pair, or undo the last join (also in the pane's Duplicates section). |
+| `/graph-merge [<name> into <name>]` | List nodes likely saved twice under two names, or join one pair; `/graph-merge undo` takes the last join back (also in the pane's Duplicates section). |
 | `/graph-export` | Save all memory to one file in Downloads. |
 | `/graph-import <file>` | Merge an export on another PC (a copy of the graph is kept first; importing twice changes nothing). |
 
