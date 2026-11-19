@@ -11,6 +11,8 @@ import type { Clawd, Dupes, DupePair, Fixing, PaneFact, PaneView, Searched, Used
 //   session.compact queues it
 // - session.start: read other mods' feeder files (graph/feeders.py), then extract queued conversations in the
 //   background with a small model, and tell the user
+// - session.start also reads the project's docs (graph/docs.py): graphcraft: front-matter in any .md at once, and
+//   CLAUDE.md and docs/*.md through the small model when they changed (setting learnDocs)
 // - /graph-memory, /graph-memory-undo, /graph-view: see what was learned, take a session back out, open the map
 // - /graph-merge (and Duplicates in the pane): join a node saved twice under two names, or mark the pair distinct;
 //   graph/dupes.py suggests, the person decides, Undo puts it back
@@ -240,6 +242,42 @@ async function drain($: Engine, model: string, from = 'earlier conversation'): P
   if (facts > 0) $.ui.toast(`memory: +${plural(facts, 'fact')} from ${from === 'this conversation' ? from : plural(sessions, from)}`)
 }
 
+/** Reads the project's docs (graph/docs.py): front-matter at once, changed key docs through the model. Never throws. */
+async function learnDocs($: Engine, model: string, useModel: boolean): Promise<void> {
+  const cwd = await $.session.cwd()
+  let facts = 0
+  let read = 0
+  try {
+    const scan = await runPy($, 'docs.py', ['scan', '--cwd', cwd], CAPTURE_TIMEOUT_MS)
+    if (!scan || typeof scan.error === 'string') {
+      $.ui.log(`graphcraft-memory: docs: ${String(scan?.error ?? 'no answer')}`, { to: 'debug' })
+      return
+    }
+    for (const p of Array.isArray(scan.problems) ? (scan.problems as string[]) : []) $.ui.log(`graphcraft-memory: docs: ${p}`, { to: 'debug' })
+    facts += Number(scan.facts ?? 0)
+    read += Number(scan.docs ?? 0)
+    const jobs = useModel && Array.isArray(scan.jobs) ? (scan.jobs as string[]) : []
+    for (const file of jobs) {
+      const prep = await runPy($, 'docs.py', ['prepare', file, '--cwd', cwd], CAPTURE_TIMEOUT_MS)
+      if (!prep || typeof prep.error === 'string') continue
+      const reply = await $.model.complete({ model, system: String(prep.system), prompt: String(prep.prompt), maxTokens: EXTRACT_MAX_TOKENS })
+      if (!reply.isAnswered) continue // the doc stays unread and is tried at the next session start
+      const replyFile = `${await dataDir($)}/tmp/doc-${Date.now()}.reply.txt`
+      await $.fs.write(replyFile, reply.text)
+      const applied = await runPy($, 'docs.py', ['apply', file, replyFile, '--cwd', cwd], CAPTURE_TIMEOUT_MS)
+      if (!applied || typeof applied.error === 'string') {
+        $.ui.log(`graphcraft-memory: docs: ${file}: ${String(applied?.error ?? 'apply failed')}`, { to: 'debug' })
+        continue
+      }
+      facts += Number(applied.facts ?? 0)
+      read += 1
+    }
+  } catch (err) {
+    $.ui.log(`graphcraft-memory: docs stopped: ${String(err).slice(0, 300)}`, { to: 'debug' })
+  }
+  if (facts > 0) $.ui.toast(`memory: +${plural(facts, 'fact')} from ${plural(read, 'project doc')}`)
+}
+
 async function memoryReport($: Engine): Promise<string> {
   const stats = await runPy($, 'store.py', ['stats'], CAPTURE_TIMEOUT_MS)
   const recent = await runPy($, 'capture.py', ['recent', '5'], CAPTURE_TIMEOUT_MS)
@@ -456,6 +494,7 @@ export const register: Register = (on, options) => {
   const isCapturing = options.capture !== false
   const every = typeof options.captureEvery === 'number' ? Math.max(0, Math.round(options.captureEvery)) : 8
   const isWarm = options.warmRecall !== false
+  const isLearningDocs = options.learnDocs !== false
   // The rest of the tuning is read by Python (graph/store.py settings), which cleans it; the hook only passes it on.
   const tuning = JSON.stringify({
     recallFacts: options.recallFacts,
@@ -584,6 +623,11 @@ export const register: Register = (on, options) => {
       }
       if (isCapturing) {
         await drain($, model)
+        await refreshView($)
+      }
+      // The project's own docs: front-matter always, changed key docs through the model when learning is on.
+      if (isLearningDocs) {
+        await learnDocs($, model, isCapturing)
         await refreshView($)
       }
       // One thing saved twice under different types splits its facts: join them (graph/store.py merge_duplicates).

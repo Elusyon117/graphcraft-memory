@@ -65,7 +65,10 @@ function engine(on: Parameters<Parameters<typeof test>[1]>[1], calls: string[][]
   on('store.delete', () => ({ value: undefined }))
   on('ui.log', () => ({ value: undefined }))
   on('ui.status', () => ({ value: undefined }))
-  on('ui.toast', () => ({ value: undefined }))
+  on('ui.toast', (_, e) => {
+    calls.push(['toast', JSON.stringify(e)])
+    return { value: undefined }
+  })
   on('session.cwd', () => ({ value: 'C:/mods/Campfires' }))
   on('ui.render', ($, e) => {
     const { Text } = $.ui.resolve(e)
@@ -83,6 +86,9 @@ function engine(on: Parameters<Parameters<typeof test>[1]>[1], calls: string[][]
       : argv.includes('tools.py remember') ? { facts: 1, nodes: 2, retired: 0, dropped: ["edge 'X' (TOOL) 'about' 'Y'"] }
       : argv.includes('sync.py export') ? { exported: 'C:\\Users\\me\\Downloads\\graphcraft-memory-2026-11-19.json', nodes: 74, facts: 82, sources: 6 }
       : argv.includes('sync.py import') ? { imported: e.argv[e.argv.length - 1], backup: 'C:/x/graph.before-import.db', nodes: 3, facts: 5, sources: 1, retired: 1 }
+      : argv.includes('docs.py scan') ? { jobs: ['C:/mods/Campfires/CLAUDE.md'], facts: 2, docs: 1, retired: 0, problems: [] }
+      : argv.includes('docs.py prepare') ? { system: 'doc system', prompt: '<document>' }
+      : argv.includes('docs.py apply') ? { file: 'Campfires/CLAUDE.md', facts: 3, retired: 0, dropped: [] }
       : argv.includes('dupes.py suggest') ? { pairs: merged ? [] : [PAIR] }
       : argv.includes('dupes.py merge') ? ((merged = true), { merged: 'warm recall', into: 'Warm recall process', facts: 1, merge: 7 })
       : argv.includes('dupes.py undo') ? ((merged = false), { undone: 7, restored: 'warm recall' })
@@ -438,4 +444,38 @@ test('/graph-merge lists pairs, merges by name, and undoes', { options: { captur
   expect((await $.command.run({ command: 'graph-merge', args: 'undo' } as never)).text).toContain('own node again')
   expect(calls.find(c => c.join(' ').includes('dupes.py undo'))?.slice(-1)).toEqual(['last'])
   expect((await $.command.run({ command: 'graph-merge', args: 'just one name' } as never)).text).toContain('Usage')
+})
+
+test('session start reads the project docs: front-matter facts, and changed key docs through the model', { options: { captureEvery: 0 } }, async ($, on) => {
+  const calls: string[][] = []
+  engine(on, calls)
+  on('model.complete', (_, e) => {
+    calls.push(['model', String(e.system)])
+    return { value: { isAnswered: true, text: '{"nodes": [], "edges": []}', usage: {} } as never }
+  })
+  await $.session.start({ cwd: 'C:/mods/Campfires', surface: 'terminal', isInteractive: true })
+  await new Promise(done => setTimeout(done, 30))
+  const ran = calls.map(c => c.join(' '))
+  expect(ran.some(c => c.includes('docs.py scan --cwd C:/mods/Campfires'))).toBe(true)
+  expect(ran.some(c => c.includes('docs.py prepare C:/mods/Campfires/CLAUDE.md'))).toBe(true)
+  expect(calls.some(c => c[0] === 'model' && c[1] === 'doc system')).toBe(true)
+  expect(ran.find(c => c.includes('docs.py apply'))).toContain('--cwd C:/mods/Campfires')
+  expect(calls.some(c => c[0] === 'toast' && c[1]!.includes('+5 facts from 2 project docs'))).toBe(true)
+})
+
+test('learnDocs off: docs are not read', { options: { capture: false, learnDocs: false } }, async ($, on) => {
+  const calls: string[][] = []
+  engine(on, calls)
+  await $.session.start({ cwd: 'C:/mods/Campfires', surface: 'terminal', isInteractive: true })
+  await new Promise(done => setTimeout(done, 30))
+  expect(calls.some(c => c.join(' ').includes('docs.py'))).toBe(false)
+})
+
+test('capture off: front-matter is still read, but no doc goes to the model', { options: { capture: false } }, async ($, on) => {
+  const calls: string[][] = []
+  engine(on, calls)
+  await $.session.start({ cwd: 'C:/mods/Campfires', surface: 'terminal', isInteractive: true })
+  await new Promise(done => setTimeout(done, 30))
+  expect(calls.some(c => c.join(' ').includes('docs.py scan'))).toBe(true)
+  expect(calls.some(c => c.join(' ').includes('docs.py prepare'))).toBe(false)
 })

@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <img alt="version" src="https://img.shields.io/badge/version-0.15.0-7F77DD">
+  <img alt="version" src="https://img.shields.io/badge/version-0.16.0-7F77DD">
   <img alt="Claude Code plugin" src="https://img.shields.io/badge/Claude%20Code-plugin-1D9E75">
   <img alt="Python standard library only" src="https://img.shields.io/badge/python-stdlib%20only-378ADD">
   <img alt="offline" src="https://img.shields.io/badge/memory-stays%20on%20your%20PC-888780">
@@ -62,6 +62,21 @@ in your conversation, and the pane, map and settings cost no tokens at all.
    by default) turns the new part of the conversation into facts. It is shown the names already in memory so it
    reuses them, and everything it returns is checked against a closed vocabulary before it is saved.
 3. **Other mods: feeders.** A mod drops facts into feed files; they are read at session start, only when changed.
+4. **Project docs.** At session start, the project's CLAUDE.md and docs/*.md are read by the small model when they
+   changed, and any .md can declare exact facts in its front-matter, read with no model:
+
+   ```yaml
+   ---
+   graphcraft:
+     nodes:
+       - Campfires: PROJECT
+       - Linked anim layer: DECISION | Chosen over the AnimBP swap, which crashed in build 3.
+     links:
+       - Campfires decided Linked anim layer
+   ---
+   ```
+
+   A doc is a snapshot: what it stops saying is retired, so memory follows the docs as they change.
 
 The full design is in [docs/DESIGN.md](docs/DESIGN.md).
 
@@ -168,6 +183,7 @@ In the mod's settings; they apply from the next session.
 | Learn from conversations (`capture`) | on | Off: recall only. |
 | Learn during the conversation (`captureEvery`) | 8 | Also learn after every this many of your messages; 0 for only at the end. |
 | Extraction model (`extractModel`) | haiku | `sonnet` catches subtler facts and costs more. |
+| Learn from project docs (`learnDocs`) | on | Reads CLAUDE.md and docs/*.md when they change (one small model call each) and `graphcraft:` front-matter in any .md (free). Off: docs are not read. |
 | Keep recall warm (`warmRecall`) | on | Off: Python starts fresh for each message (about 150 ms instead of 5). |
 | Map opens in (`mapLayout`) | Structured | Or Free. |
 

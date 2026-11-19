@@ -110,5 +110,50 @@ class NamedFactTest(unittest.TestCase):
         self.assertEqual(self.first("is Ember shader part of Campfires?"), ("Ember shader", "part_of", "Campfires"))
 
 
+class PathTest(unittest.TestCase):
+    """Two things named in one prompt: the facts that connect them come before many weightier facts next to one."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.db = store.connect(Path(cls.tmp.name) / "graph.db")
+        o = store.add_origin(cls.db, "session", "old")
+        store.upsert(cls.db, {
+            "nodes": [{"name": "Campfires", "type": "PROJECT"}, {"name": "Linked anim layer", "type": "DECISION"},
+                      {"name": "Bedroll override", "type": "PROBLEM"}, {"name": "Bedroll Mod", "type": "PROJECT"},
+                      {"name": "User", "type": "PERSON"}],
+            "edges": [{"source": "Campfires", "predicate": "decided", "target": "Linked anim layer"},
+                      {"source": "Linked anim layer", "predicate": "because", "target": "Bedroll override"},
+                      {"source": "Bedroll override", "predicate": "about", "target": "Bedroll Mod"},
+                      # through the user everything connects: not a path
+                      {"source": "User", "predicate": "works_on", "target": "Campfires"},
+                      {"source": "User", "predicate": "works_on", "target": "Bedroll Mod"}]}, o, VOCAB)
+        cls.db.execute("UPDATE relations SET created=created-90*86400 WHERE origin_id=?", (o,))
+        for i in range(30):
+            o = store.add_origin(cls.db, "session", f"s{i}")
+            store.upsert(cls.db, {
+                "nodes": [{"name": "Campfires", "type": "PROJECT"}, {"name": f"Choice {i}", "type": "DECISION"},
+                          {"name": f"Bug {i}", "type": "PROBLEM"}],
+                "edges": [{"source": "Campfires", "predicate": "decided", "target": f"Choice {i}"},
+                          {"source": f"Choice {i}", "predicate": "because", "target": f"Bug {i}"}]}, o, VOCAB)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.db.close()
+        cls.tmp.cleanup()
+
+    def test_the_chain_between_two_named_things_comes_first(self):
+        out = recall.recall("how does Campfires clash with Bedroll Mod?", db=self.db, max_facts=4)
+        top = [(t["source"], t["predicate"], t["target"]) for t in out["triples"][:3]]
+        self.assertCountEqual(top, [("Campfires", "decided", "Linked anim layer"),
+                                    ("Linked anim layer", "because", "Bedroll override"),
+                                    ("Bedroll override", "about", "Bedroll Mod")])
+
+    def test_no_path_through_the_user(self):
+        uid, cid, bid = (recall._ids_for(self.db, [store.normalise(n)]).pop() for n in ("User", "Campfires", "Bedroll Mod"))
+        rows = [(None, "works_on", None, uid, cid), (None, "works_on", None, uid, bid)]
+        self.assertEqual(recall.bridges(self.db, rows, [cid, bid]), {})
+
+
 if __name__ == "__main__":
     unittest.main()

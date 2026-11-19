@@ -122,6 +122,18 @@ A mod that wants to feed the graph ships `graphcraft/feeder.json` in its plugin 
   gives them again. Paths in `feeder.json` must stay inside the mod's folder; a broken adapter is logged, not fatal.
 - No feeder file: nothing happens. No graphcraft-memory installed: the mod ignores its own `graphcraft/` folder.
 
+### 5. Project docs (`graph/docs.py`)
+At session start (setting `learnDocs`, on by default), after capture, the project's own documents are read. Each doc
+is a **snapshot** under origin `file:<path>`, like a feeder source: facts it no longer gives are retired, and a deleted
+doc's facts are retired with it. Only the doc's own record is retired; the same fact said in a session stays live.
+- **Front-matter** (no model, any `.md` under the project, hidden folders and `node_modules`-style folders skipped,
+  2,000 files at most): a `graphcraft:` block in the YAML header with `nodes` (`Name: TYPE | description`), `links`
+  (`Source predicate Target`) and `aliases` (`Name: alias`). Read by a small parser (standard library, no YAML).
+- **Key docs** (`CLAUDE.md`, `docs/**/*.md`, 20 at most): when the text's hash changed, capture's prompt worded for a
+  document (no title, no retire) goes to the extraction model, 5 docs a session start at most; a failed call leaves
+  the doc for the next one. With capture off, only front-matter is read.
+- Never the home folder or a drive root, so opening Claude in `~` reads nothing.
+
 ## Settings (the user's tuning)
 
 The mod's settings (`.claude-plugin/plugin.json` `userConfig`) are written by the hook at session start to
@@ -135,6 +147,7 @@ agree without flags threaded through each call; `serve.py` rereads it only when 
 - `skipTypes`: those types are not offered to the extraction model, upsert drops their nodes and any fact touching
   them ("switched off in the settings"), and recall skips facts touching them. Facts already saved stay in the graph.
   Link checks still read the full vocabulary, so switching a type off never loosens what a predicate may link.
+- `learnDocs`: off skips project docs entirely (front-matter too).
 - `warmRecall`: off skips `serve.py`; every prompt runs `recall.py`.
 - `mapLayout`: which layout `/graph-view` opens in (the page remembers a later switch in the browser).
 

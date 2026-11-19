@@ -17,7 +17,8 @@ Steps:
    weightiest facts are the ones reached.
 3. Rank by one score: importance (the kind of link, decisions, problems and preferences, a fact several sources
    said), less NEAR_COST per link away from what the prompt named, less OTHER_PROJECT for another project's facts;
-   newest first among equals. A fact linking two things the prompt named gets BOTH_NAMED on top. So an old decision and its reason are not crowded out by many newer, lighter notes
+   newest first among equals. A fact linking two things the prompt named gets BOTH_NAMED on top, and a fact
+   on a short path between two of them (how they connect) gets PATH per pair it bridges. So an old decision and its reason are not crowded out by many newer, lighter notes
    about the same thing, while a weighty fact one link out still beats a trivial one next to the seed.
 4. Trim: at most MAX_FACTS facts and MAX_CHARS characters (about 400 tokens).
 """
@@ -43,6 +44,13 @@ NEAR_COST = 3  # a fact about what the prompt named beats context one link out, 
 OTHER_PROJECT = 0.5
 # A fact linking two things the prompt named is what it asks about: it comes before any weightier neighbour.
 BOTH_NAMED = 5
+# A fact on a short path between two things the prompt named (A -> X -> B) is how they connect: no NEAR_COST, and
+# PATH for each such pair it lies on, at most PATH_PAIRS pairs. Paths up to PATH_LEN links; hubs and PASS_OVER nodes are not walked
+# through, or the project and the user would connect everything. At most PATH_ENDS named things are paired.
+PATH = 2
+PATH_PAIRS = 2
+PATH_LEN = 3
+PATH_ENDS = 8
 # How much a kind of link says. Reasons, choices, problems and preferences matter most; "part of" and
 # "references" are the notes a big graph has thousands of. Unlisted predicates (a feeder's own) weigh 1.
 WEIGHT = {"because": 3, "fixed_by": 3, "decided": 3, "blocked_by": 3, "avoids": 3, "prefers": 3, "crashed_with": 3,
@@ -193,6 +201,53 @@ def _degree(db, eid: str) -> int:
                       (eid, eid)).fetchone()[0]
 
 
+def bridges(db, rows: list, ends: list) -> dict:
+    """{(source_id, predicate, target_id): how many pairs of `ends` the fact lies on a shortest path between}, over
+    the facts already reached (`rows`: source_id at [3], target_id at [4]). A fact linking two ends directly is left
+    out: BOTH_NAMED already lifts it."""
+    if len(ends) < 2:
+        return {}
+    ends_set = set(ends)
+    adj = {}
+    for r in rows:
+        if r[3] != r[4]:
+            adj.setdefault(r[3], set()).add(r[4])
+            adj.setdefault(r[4], set()).add(r[3])
+    info = _hub_info(db, [n for n in adj if n not in ends_set])
+    through = {n for n in adj if n in ends_set or (info[n][0] <= HUB and info[n][1] not in PASS_OVER)}
+
+    def dist_from(start):  # BFS, PATH_LEN deep, only passing through `through` nodes
+        dist, frontier = {start: 0}, [start]
+        for d in range(1, PATH_LEN + 1):
+            nxt = []
+            for n in frontier:
+                if n != start and n not in through:
+                    continue
+                for m in adj.get(n, ()):
+                    if m not in dist:
+                        dist[m] = d
+                        nxt.append(m)
+            frontier = nxt
+        return dist
+
+    dist = {e: dist_from(e) for e in ends if e in adj}
+    pairs = [(a, b) for i, a in enumerate(dist) for b in list(dist)[i + 1:] if b in dist[a] and dist[a][b] >= 2]
+    out = {}
+    for r in rows:
+        u, v = r[3], r[4]
+        if u in ends_set and v in ends_set:
+            continue
+        n = 0
+        for a, b in pairs:
+            da, db_, length = dist[a], dist[b], dist[a][b]
+            if any(x in da and y in db_ and da[x] + 1 + db_[y] == length and
+                   (x == a or x in through) and (y == b or y in through) for x, y in ((u, v), (v, u))):
+                n += 1
+        if n:
+            out[(r[3], r[1], r[4])] = min(n, PATH_PAIRS)
+    return out
+
+
 def recall(prompt: str, cwd: str = "", hops: int | None = None, db=None, max_facts: int | None = None,
            max_chars: int | None = None, seeds: set | None = None, with_project: bool = True, session: str = "") -> dict:
     """The prompt hook's recall; memory_search passes bigger limits and, when it found seeds its own way, those.
@@ -241,6 +296,8 @@ def recall(prompt: str, cwd: str = "", hops: int | None = None, db=None, max_fac
     said = {}  # how many sources said each fact: one said in several sessions weighs more
     for row in rows:
         said[(row[3], row[1], row[4])] = said.get((row[3], row[1], row[4]), 0) + 1
+    # Only things named outright: a word match is a guess, and a path to a guess must not outrank the names.
+    bridged = bridges(db, rows, sorted(seeds)[:PATH_ENDS])
 
     def rank(row):
         near = min(depth.get(row[3], 99), depth.get(row[4], 99))
@@ -248,7 +305,10 @@ def recall(prompt: str, cwd: str = "", hops: int | None = None, db=None, max_fac
         other_project = 1 if proj and proj != here else 0
         importance = weight(row[1], row[9], row[10]) + 0.5 * (said[(row[3], row[1], row[4])] - 1)
         both = BOTH_NAMED if row[3] in prompted and row[4] in prompted else 0
-        score = importance + both - NEAR_COST * near - OTHER_PROJECT * other_project
+        bridges_ = bridged.get((row[3], row[1], row[4]), 0)
+        # between two named things is about them: no cost for being a link or two out
+        cost = 0 if bridges_ else NEAR_COST * near
+        score = importance + both + PATH * bridges_ - cost - OTHER_PROJECT * other_project
         return (-score, near, -row[8], row[0], row[1], row[2])
 
     triples, seen, used = [], set(), set()
