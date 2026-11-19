@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface as Engine, Register } from 'claude-code'
 
-import type { Clawd, PaneFact, PaneView, Used } from '../types'
+import type { Clawd, Fixing, PaneFact, PaneView, Searched, Used } from '../types'
 
 // graphcraft-memory, the mod side. Python (graph/) owns the graph; this module only decides when things run:
 // - prompt.submit: recall the facts linked to the prompt and attach them as context (never blocks a prompt)
@@ -10,7 +10,8 @@ import type { Clawd, PaneFact, PaneView, Used } from '../types'
 //   background with a small model, and tell the user
 // - /graph-memory, /graph-memory-undo, /graph-view: see what was learned, take a session back out, open the map
 // - /graph-rename (and Rename in the pane): give a session your own name; a later capture never replaces it
-// - the Memory pane (/graph-pane): facts used for the prompt, facts learned last session, open problems;
+// - the Memory pane (/graph-pane): search memory, facts used for the prompt, facts learned last session, open
+//   problems; Forget or Fix any fact (Fix: pick the right link, or tell Claude what is true);
 //   and a brief band above the prompt until the first message
 
 const CANDIDATES: readonly (readonly string[])[] = [['py', '-3'], ['python3'], ['python']]
@@ -34,6 +35,10 @@ const clawd = atom({ plugin: 'graphcraft-memory', key: 'clawd' } as const, null,
 const briefShown = atom({ plugin: 'graphcraft-memory', key: 'briefShown' } as const, true, { shape: 'brief-1' })
 // True while the pane shows the field that renames the last session.
 const renaming = atom({ plugin: 'graphcraft-memory', key: 'renaming' } as const, false, { shape: 'renaming-1' })
+// The pane's search results, and the fact being corrected.
+const searched = atom({ plugin: 'graphcraft-memory', key: 'searched' } as const, null as Searched | null, { shape: 'searched-1' })
+const fixing = atom({ plugin: 'graphcraft-memory', key: 'fixing' } as const, null as Fixing | null, { shape: 'fixing-1' })
+const SHOW_SEARCH = 6
 
 // Found once per load; undefined = not looked yet, null = no Python 3 on this machine.
 let python: readonly string[] | null | undefined
@@ -279,11 +284,54 @@ async function renameSession($: Engine, which: string, title: string): Promise<s
   return `Session ${out.renamed.slice(0, 8)} is now "${String(out.title)}".`
 }
 
+/** Swaps one fact in the pane's lists (`to` undefined: drops it). */
+async function replaceFact($: Engine, from: PaneFact, to?: PaneFact): Promise<void> {
+  const k = factKey(from)
+  const swap = (facts: PaneFact[]) => facts.flatMap(x => (factKey(x) === k ? (to ? [to] : []) : [x]))
+  await update($, used, u => (u ? { ...u, facts: swap(u.facts) } : u))
+  await update($, searched, s => (s ? { ...s, facts: swap(s.facts) } : s))
+}
+
 async function forgetFact($: Engine, f: PaneFact): Promise<void> {
   await runPy($, 'pane.py', ['forget', f.source_id, f.predicate, f.target_id], CAPTURE_TIMEOUT_MS)
-  const k = factKey(f)
-  await update($, used, u => (u ? { ...u, facts: u.facts.filter(x => factKey(x) !== k) } : u))
+  await replaceFact($, f)
   await refreshView($)
+}
+
+async function searchMemory($: Engine, query: string): Promise<void> {
+  await update($, fixing, () => null)
+  if (!query.trim()) return void (await update($, searched, () => null))
+  const out = await runPy($, 'tools.py', ['search', '--cwd', await $.session.cwd(), '--', query.trim().slice(0, 500)], CAPTURE_TIMEOUT_MS)
+  const facts = Array.isArray(out?.triples) ? (out.triples as PaneFact[]) : []
+  await update($, searched, () => ({ query: query.trim(), facts: facts.slice(0, SHOW_SEARCH), more: Math.max(0, facts.length - SHOW_SEARCH) }))
+}
+
+async function openFix($: Engine, f: PaneFact): Promise<void> {
+  const out = await runPy($, 'pane.py', ['links', f.source_id, f.target_id], CAPTURE_TIMEOUT_MS)
+  const links = Array.isArray(out?.links) ? (out.links as Fixing['links']) : []
+  await update($, fixing, () => ({ key: factKey(f), links }))
+}
+
+async function relinkFact($: Engine, f: PaneFact, link: string): Promise<void> {
+  if (link === f.predicate) return
+  const args = ['relink', f.source_id, f.predicate, f.target_id, link, '--session', await $.session.id(), '--project', await $.session.cwd()]
+  const out = await runPy($, 'pane.py', args, CAPTURE_TIMEOUT_MS)
+  const fixed = out?.fact as PaneFact | undefined
+  if (!fixed) return void $.ui.toast(`memory: not changed (${String(out?.error ?? 'no answer')})`)
+  await replaceFact($, f, fixed)
+  await update($, fixing, () => null)
+  $.ui.toast(`memory: now "${fixed.source} ${fixed.predicate.replace(/_/g, ' ')} ${fixed.target}"`)
+  await refreshView($)
+}
+
+/** A correction only Claude can make (a wrong name, a fact that should be two): a turn, as if the person typed it. */
+async function tellClaude($: Engine, f: PaneFact, truth: string): Promise<void> {
+  await update($, fixing, () => null)
+  await $.prompt.submit({
+    text: `Correct my memory: "${f.source} ${f.predicate} ${f.target}" is wrong. ${truth.trim()} ` +
+      'Retire the wrong fact and save what is true with memory_remember.',
+    asUser: true,
+  })
 }
 
 export const register: Register = (on, options) => {
@@ -456,6 +504,8 @@ export const register: Register = (on, options) => {
       const pet = await read($, clawd)
       const learned = v?.learned
       const isRenaming = await read($, renaming)
+      const found = await read($, searched)
+      const fix = await read($, fixing)
       // Desktop draws each section as a card; the terminal has few rows, so there sections are plain.
       const isDesktop = 'Svg' in el
       const card = isDesktop ? ({ borderStyle: 'round', borderColor: 'subtle', paddingX: 'md', paddingY: 'sm' } as const) : {}
@@ -488,6 +538,41 @@ export const register: Register = (on, options) => {
           </Box>
         </Box>
       )
+
+      // Fix and Forget on a fact; under it, while open, the Fix box: the right link, or words for Claude.
+      const fixable = (prefix: string, f: PaneFact) => {
+        const k = factKey(f)
+        const isOpen = fix?.key === k
+        return (
+          <Box key={`${prefix}:${k}`} flexDirection="column" rowGap="xs">
+            {row(`${prefix}r:${k}`, f,
+              <Box flexDirection="row" columnGap="xs">
+                <Button key={`fix:${prefix}:${k}`} label={isOpen ? 'Close' : 'Fix'} variant="secondary"
+                  onPress={() => void (isOpen ? update($, fixing, () => null) : openFix($, f))} />
+                <Button key={`forget:${prefix === 'u' ? '' : `${prefix}:`}${k}`} label="Forget" variant="secondary" onPress={() => void forgetFact($, f)} />
+              </Box>)}
+            {isOpen && (
+              <Box flexDirection="column" rowGap="xs" paddingLeft="md">
+                {fix.links.length > 0 && (
+                  <el.Select
+                    key="fix-link"
+                    label="Link"
+                    value={fix.links.some(l => l.value === f.predicate) ? f.predicate : fix.links[0]!.value}
+                    options={fix.links}
+                    onSelect={value => void relinkFact($, f, value)}
+                  />
+                )}
+                <el.Input
+                  key="fix-tell"
+                  placeholder="Or tell Claude what is true"
+                  submitLabel="tell Claude"
+                  onSubmit={value => void (value.trim() ? tellClaude($, f, value) : undefined)}
+                />
+              </Box>
+            )}
+          </Box>
+        )
+      }
 
       const usedFacts = u?.facts ?? []
       const hidden = u ? usedFacts.length - SHOW_USED + u.more : 0
@@ -526,19 +611,36 @@ export const register: Register = (on, options) => {
             </Box>
           </Box>
 
+          <Box flexDirection="column" rowGap="sm">
+            <el.Input
+              key="search"
+              placeholder="Search memory: names or words"
+              value={found?.query ?? ''}
+              submitLabel="search"
+              onSubmit={value => void searchMemory($, value)}
+            />
+            {found &&
+              section(
+                `Search: ${found.query}`,
+                found.facts.length === 0 ? 'nothing found' : plural(found.facts.length + found.more, 'fact'),
+                <Box flexDirection="column" rowGap="sm">
+                  {found.facts.length === 0 && note('Nothing in memory matches. Try other words, or a name.')}
+                  {found.facts.map(f => fixable('s', f))}
+                  {found.more > 0 && note(`+${found.more} more · ask Claude to search memory for the rest`)}
+                  <Box flexDirection="row" marginTop="xs">
+                    <Button key="search-clear" label="Clear" variant="secondary" onPress={() => void searchMemory($, '')} />
+                  </Box>
+                </Box>,
+              )}
+          </Box>
+
           {section(
             'Used for this prompt',
             u && u.matched.length > 0 ? `matched ${u.matched.map(m => `"${m}"`).join(', ')}` : '',
             <Box flexDirection="column" rowGap="sm">
               {!u && note('Send a message: the facts recalled for it show here.')}
               {u && usedFacts.length === 0 && note('Nothing in memory is linked to the last message.')}
-              {usedFacts.slice(0, SHOW_USED).map(f =>
-                row(
-                  `u:${factKey(f)}`,
-                  f,
-                  <Button key={`forget:${factKey(f)}`} label="Forget" variant="secondary" onPress={() => void forgetFact($, f)} />,
-                ),
-              )}
+              {usedFacts.slice(0, SHOW_USED).map(f => fixable('u', f))}
               {hidden > 0 && note(`+${hidden} more · all in the map`)}
             </Box>,
           )}

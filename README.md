@@ -44,8 +44,9 @@ Update later with `claude plugin marketplace update elusyon-graphcraft-memory`, 
 
 Nothing to run once installed:
 
-1. **Every prompt:** the facts linked to what you mention ride along to Claude. The status line shows
-   `memory: N facts` when there were any.
+1. **Every prompt:** the facts linked to what you mention ride along to Claude, by name, or by the words you use
+   when you name nothing exactly ("that sleeping mod that clashed with us" finds Bedroll Mod). No model is called,
+   so it stays a few milliseconds. The status line shows `memory: N facts` when there were any.
 2. **When a session ends or compacts:** the conversation (your words and Claude's, no tool output) is queued.
 3. **At your next session start:** a small model (Haiku by default) turns it into facts in the background, and a
    toast says how many it learned.
@@ -56,7 +57,8 @@ browser (structured or free layout, a "Why chains" filter, click a node for its 
 every session newest first, what it taught and what has been retired since, and "Show on map" to light just its facts.
 Each session is named for what happened in it (the extraction model writes the title); `/graph-rename <session id or
 last> <name>`, the pane's Rename button or a timeline card's ✎ gives it your own name, which later captures keep. The **Memory pane** opens beside
-the chat: the facts used for your last prompt (Forget), what the last session taught it (Keep, Drop, Undo session) and
+the chat: a search box over everything remembered, the facts used for your last prompt (Forget, or Fix: pick the
+right link, or tell Claude what is true), what the last session taught it (Keep, Drop, Undo session) and
 this project's problems; close it and `/graph-pane` brings it back. Clawd sits in the corner with a memory bubble: when
 facts were recalled, a little graph builds itself in it as recall walks the links. With the clawd-pet mod installed,
 Clawd himself uses that mod's frames (read from your install, never copied here); without it, a stand-in Clawd. A

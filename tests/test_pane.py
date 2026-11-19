@@ -57,6 +57,33 @@ class PaneTest(unittest.TestCase):
         out = pane.state(CWD)["learned"]
         self.assertEqual((out["title"], out["titleIsAuto"]), ("Bedroll clash", False))
 
+    # --- Fix ---
+
+    def ids(self, a, at, b, bt):
+        return store.entity_id(at, a), store.entity_id(bt, b)
+
+    def test_links_follow_the_vocabulary_both_ways(self):
+        crash, layer = self.ids("Swap crash", "PROBLEM", "Linked layer", "DECISION")
+        values = {x["value"] for x in pane.links(crash, layer)["links"]}
+        self.assertIn("fixed_by", values)  # PROBLEM fixed_by DECISION
+        self.assertIn("~because", values)  # DECISION because PROBLEM: the other way round
+        self.assertNotIn("prefers", values)
+
+    def test_relink_retires_the_old_fact_and_saves_the_new_under_the_session(self):
+        crash, layer = self.ids("Swap crash", "PROBLEM", "Linked layer", "DECISION")
+        out = pane.relink(crash, "fixed_by", layer, "~because", "s-3", CWD)
+        self.assertEqual((out["retired"], out["fact"]["source"], out["fact"]["predicate"]), (1, "Linked layer", "because"))
+        with closing(store.connect()) as db:
+            live = {r for r in db.execute("SELECT predicate, ref FROM relations r JOIN origins o ON o.id=r.origin_id"
+                                          " WHERE source_id IN (?, ?) AND target_id IN (?, ?) AND retired IS NULL",
+                                          (crash, layer, crash, layer))}
+        self.assertEqual(live, {("because", "s-3")})
+
+    def test_relink_refuses_a_link_the_vocabulary_does_not_allow(self):
+        crash, layer = self.ids("Swap crash", "PROBLEM", "Linked layer", "DECISION")
+        self.assertIn("error", pane.relink(crash, "fixed_by", layer, "prefers", "s-3", CWD))
+        self.assertEqual(len(pane.state(CWD)["problems"]), 2)  # nothing retired
+
     def test_problems_open_first_and_fixed_by(self):
         problems = pane.state(CWD)["problems"]
         self.assertEqual([(p["name"], p["fixed"]) for p in problems],

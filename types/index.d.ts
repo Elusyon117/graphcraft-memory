@@ -14,6 +14,12 @@ export type PaneView = {
   problems: { name: string; fixed: boolean; fixedBy: string }[]
 }
 
+/** The pane's search: what was asked and the facts found (memory_search's triples). */
+export type Searched = { query: string; facts: PaneFact[]; more: number }
+
+/** The fact whose Fix box is open, and the links the vocabulary allows between its two nodes ("~p": reversed). */
+export type Fixing = { key: string; links: { value: string; label: string }[] }
+
 /** graph/clawd.py svg: Clawd from the clawd-pet mod's frames, when that mod is installed. */
 export type ClawdArt = { svg: string; width: number; height: number }
 export type Clawd = { lit: ClawdArt; idle: ClawdArt; source: string }
@@ -26,6 +32,8 @@ declare module 'claude-code' {
       view: Shaped<PaneView | null>
       briefShown: Shaped<boolean>
       renaming: Shaped<boolean>
+      searched: Shaped<Searched | null>
+      fixing: Shaped<Fixing | null>
     }
   }
 }

@@ -142,15 +142,20 @@ already tried, before Claude replies, and it survives compaction because it is r
 1. **Store + recall:** schema, upsert, recursive walk, prompt hook, a fixture graph and tests.
 2. **Capture:** session digest, extraction prompt, validation, upsert.
 3. **Feeder contract:** discovery, validation, the zonecraft adapter (conflicts and crashes first). Done in 0.8.0.
-4. **Panel:** what was injected this prompt, search the graph, retire or correct a fact.
-5. **Meaning-based seeding** for prompts that name nothing exactly.
+4. **Panel:** what was injected this prompt, search the graph, retire or correct a fact. Done in 0.9.0: Fix offers
+   the links the vocabulary allows between the two nodes (either way round) and saves the pick under the current
+   session, or sends Claude the person's words to retire and re-save with memory_remember.
+5. **Meaning-based seeding** for prompts that name nothing exactly. Done in 0.9.0 without a model: `graph/terms.py`
+   indexes every node's name and description as word stems (camelCase and snake_case split), maps a short synonym
+   list (`vocabulary/synonyms.json`), and seeds the nodes the prompt's rarer words point at (two words, or one name
+   word few nodes share). Word seeds start one step out, so names the prompt says still rank first.
 
 ## Known limits (plan for them)
 - Facts from a session reach recall only after the next session start (or a compaction), not during it.
 - Each prompt starts a fresh Python process: recall itself takes a few ms, but the round trip is about 230 ms on
   Windows (interpreter start). Later: keep one recall process alive with `$.process.spawn` and talk to it over
   stdin/stdout.
-- Exact-name seeding misses vague prompts (milestone 5).
+- Word seeding is not meaning: "the sleeping mod" finds Bedroll Mod only if a fact or description says it sleeps.
 - Hub nodes crowd results (damping in recall).
 - Wrong extractions get repeated confidently (validation, origins, and the panel to fix them).
 - Stale facts (retire instead of delete; extraction can retire "X blocked_by Y" when Y is fixed).

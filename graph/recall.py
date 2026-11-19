@@ -7,8 +7,10 @@ No model anywhere in this file (CLAUDE.md rule 1): plain SQLite, so it is determ
 yet it answers "nothing" without creating one.
 
 Steps:
-1. Seed: every 1-4 word run of the prompt, normalised, looked up in entity names and aliases (indexed). The current
-   project's PROJECT node (by folder name) joins the seeds.
+1. Seed: every 1-4 word run of the prompt, normalised, looked up in entity names and aliases (indexed). Then the
+   word index (terms.py): nodes whose name or description share the prompt's rarer words, stems and synonyms, so a
+   vague prompt finds them too; they start one step further out, so exact names rank first. The current project's
+   PROJECT node (by folder name) joins the seeds.
 2. Walk: breadth first, `hops` steps, retired facts skipped. A node with more than HUB links that is not a seed is
    not walked through, so one busy node cannot pull in half the graph.
 3. Rank: nearest first, then facts from this project or global before other projects' facts.
@@ -25,6 +27,7 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import store  # noqa: E402
+import terms  # noqa: E402
 
 MAX_NGRAM = 4
 HUB = 25
@@ -71,13 +74,19 @@ def project_seed(db, cwd: str) -> set:
     return {r[0] for r in rows}
 
 
-def walk(db, seeds: set, hops: int) -> dict:
-    """{entity_id: depth} reached from the seeds."""
-    depth = {s: 0 for s in seeds}
+def walk(db, seeds: set, hops: int, later: dict | None = None) -> dict:
+    """{entity_id: depth} reached from the seeds; `later` seeds start at the depth given ({id: depth}), so word
+    matches and the project rank after the names the prompt said."""
+    later = {s: d for s, d in (later or {}).items() if s not in seeds}
+    depth = {s: 0 for s in seeds} | later
     frontier = set(seeds)
     for d in range(1, hops + 1):
-        expand = [n for n in frontier if n in seeds or _degree(db, n) <= HUB]
+        frontier |= {s for s in later if depth[s] == d - 1}
+        expand = [n for n in frontier if n in seeds or n in later or _degree(db, n) <= HUB]
         if not expand:
+            if any(dd >= d for dd in later.values()):
+                frontier = set()
+                continue  # word matches still to join, one step further out
             break
         marks = ",".join("?" * len(expand))
         rows = db.execute(
@@ -110,14 +119,20 @@ def recall(prompt: str, cwd: str = "", hops: int = 2, db=None, max_facts: int = 
         with closing(db):
             return recall(prompt, cwd, hops, db, max_facts, max_chars, seeds, with_project)
 
-    seeds = set(seeds) if seeds is not None else _ids_for(db, ngrams(prompt))
-    if not seeds:  # nothing named: the project alone would only add noise
+    fuzzy = set()
+    if seeds is None:
+        seeds = _ids_for(db, ngrams(prompt))
+        fuzzy = set(terms.fuzzy_seeds(db, prompt, exclude=seeds))
+    seeds = set(seeds)
+    if not seeds and not fuzzy:  # nothing named: the project alone would only add noise
         empty["ms"] = (time.perf_counter() - t0) * 1000
         return empty
     named = sorted(seeds)
-    if with_project:
-        seeds |= project_seed(db, cwd)
-    depth = walk(db, seeds, hops)
+    later = {s: 1 for s in fuzzy}
+    if with_project:  # context, not the subject: one step out when a name was said, two when only words matched
+        for p in project_seed(db, cwd):
+            later.setdefault(p, 1 if seeds else 2)
+    depth = walk(db, seeds, hops, later)
     ids = list(depth)
 
     marks = ",".join("?" * len(ids))
@@ -168,8 +183,10 @@ def recall(prompt: str, cwd: str = "", hops: int = 2, db=None, max_facts: int = 
         empty["ms"] = ms
         return empty
     context = HEADER + "\n\n" + "\n".join(lines) + ("\n\nwhere:\n" + "\n".join(notes) if notes else "")
-    marks = ",".join("?" * len(named))
-    matched = [r[0] for r in db.execute(f"SELECT name FROM entities WHERE id IN ({marks})", named)]  # noqa: S608
+    def names(ids_):
+        marks_ = ",".join("?" * len(ids_))
+        return [r[0] for r in db.execute(f"SELECT name FROM entities WHERE id IN ({marks_})", sorted(ids_))]  # noqa: S608
+    matched = names(named) + ["~" + n for n in names(fuzzy - set(named))]  # ~: found by its words, not its name
     return {"facts": len(lines), "ms": ms, "summary": f"memory: {len(lines)} facts, {ms:.0f} ms",
             "context": context, "triples": kept, "matched": matched, "more": len(triples) - len(kept)}
 

@@ -1,0 +1,18 @@
+{
+  "_comment": "Words a vague prompt may use for the same thing (graph/terms.py). Each group's first word stands for the group. Keep groups tight: a loose one pulls in unrelated facts.",
+  "groups": [
+    ["crash", "break", "broke", "broken", "freeze", "froze", "ctd"],
+    ["fail", "failure", "error", "bug", "glitch"],
+    ["fix", "solve", "repair", "resolve", "workaround"],
+    ["anim", "animation", "animate"],
+    ["conflict", "clash", "collide", "collision", "incompatible"],
+    ["remove", "delete", "drop", "forget", "undo"],
+    ["picture", "image", "art", "sprite", "drawing", "pixel"],
+    ["slow", "lag", "latency", "delay", "laggy"],
+    ["config", "cfg", "setting", "option"],
+    ["sit", "seat", "seated"],
+    ["test", "check", "verify"],
+    ["release", "publish", "ship"],
+    ["vanish", "disappear", "missing", "gone", "hidden"]
+  ]
+}

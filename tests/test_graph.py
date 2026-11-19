@@ -13,6 +13,7 @@ ROOT = HERE.parent
 sys.path.insert(0, str(ROOT / "graph"))
 import recall  # noqa: E402
 import store  # noqa: E402
+import terms  # noqa: E402
 
 FIXTURE = json.loads((HERE / "fixture.json").read_text(encoding="utf-8"))
 VOCAB = store.load_vocabulary([HERE / "fixture_vocab.json"])
@@ -183,6 +184,45 @@ class GraphTest(unittest.TestCase):
         ms = (time.perf_counter() - t0) * 1000
         self.assertGreater(out["facts"], 0)
         self.assertLess(ms, 50, f"recall took {ms:.1f} ms")
+
+    # --- vague prompts (terms.py) ---
+
+    def test_stems_split_words_and_synonyms(self):
+        self.assertEqual(terms.terms_of("Sitting crashed, it broke"), {"sit", "crash"})
+        self.assertEqual(terms.terms_of("AnimBP_Player"), {"anim", "player"})
+        self.assertEqual(terms.terms_of("overriding"), terms.terms_of("overrides"))
+        self.assertEqual(terms.terms_of("the thing that was there"), set())
+
+    def test_vague_prompt_finds_facts_by_their_words(self):
+        out = self.ask("the game broke when I was seated")
+        self.assertIn(("Campfires", "tried", "Reinit swap on sit"), self.facts(out))
+        self.assertIn("~Reinit swap on sit", out["matched"])
+
+    def test_description_words_find_a_node(self):
+        out = self.ask("which mod also replaces the player blueprint?")
+        self.assertIn(("Bedroll Mod", "overrides", "AnimBP_Player"), self.facts(out))
+
+    def test_exact_names_rank_before_word_matches(self):
+        out = self.ask("Bedroll Mod and the sitting idea")
+        self.assertEqual(out["triples"][0]["near"], 0)
+        self.assertEqual(out["triples"][0]["source"], "Bedroll Mod")
+
+    def test_one_common_word_is_not_enough(self):
+        self.assertEqual(self.ask("tell me about the build")["facts"], 0)
+
+    def test_word_index_follows_edits_and_forgetting(self):
+        store.upsert(self.db, {"nodes": [{"name": "Bedroll Mod", "type": "NEXUS_MOD", "description": "Lets you sleep."}]},
+                     self.origin, VOCAB)
+        self.assertTrue(terms.fuzzy_seeds(self.db, "the sleeping mod"))
+        store.forget_origin(self.db, self.origin)
+        self.assertEqual(self.db.execute("SELECT COUNT(*) FROM terms").fetchone()[0], 0)
+
+    def test_old_graph_gets_its_word_index(self):
+        self.db.execute("DELETE FROM terms")
+        self.db.commit()
+        self.db.close()
+        self.db = store.connect(self.path)
+        self.assertGreater(self.db.execute("SELECT COUNT(*) FROM terms").fetchone()[0], 0)
 
     # --- session names ---
 

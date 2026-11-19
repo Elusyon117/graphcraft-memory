@@ -26,6 +26,9 @@ import time
 import uuid
 from pathlib import Path
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import terms  # noqa: E402
+
 ROOT = Path(__file__).resolve().parents[1]
 CORE_VOCAB = ROOT / "vocabulary" / "core.json"
 
@@ -45,7 +48,11 @@ CREATE TABLE IF NOT EXISTS aliases (
   entity_id TEXT NOT NULL, alias TEXT NOT NULL, norm TEXT NOT NULL, UNIQUE(entity_id, norm));
 CREATE TABLE IF NOT EXISTS captured (
   session_id TEXT NOT NULL, hash TEXT NOT NULL, at REAL NOT NULL, UNIQUE(session_id, hash));
+CREATE TABLE IF NOT EXISTS terms (
+  term TEXT NOT NULL, entity_id TEXT NOT NULL, field INTEGER NOT NULL, UNIQUE(term, entity_id, field));
 CREATE INDEX IF NOT EXISTS entities_norm ON entities(norm);
+CREATE INDEX IF NOT EXISTS terms_term ON terms(term);
+CREATE INDEX IF NOT EXISTS terms_entity ON terms(entity_id);
 CREATE INDEX IF NOT EXISTS aliases_norm ON aliases(norm);
 CREATE INDEX IF NOT EXISTS relations_source ON relations(source_id);
 CREATE INDEX IF NOT EXISTS relations_target ON relations(target_id);
@@ -117,6 +124,9 @@ def _migrate(db: sqlite3.Connection) -> None:
         db.execute("ALTER TABLE origins ADD COLUMN title TEXT NOT NULL DEFAULT ''")
     if "titled_by" not in have:  # '' (none yet), 'model' or 'user'; a user's name is never replaced
         db.execute("ALTER TABLE origins ADD COLUMN titled_by TEXT NOT NULL DEFAULT ''")
+    # the word index for vague prompts (terms.py), built once for a graph made before it existed
+    if not db.execute("SELECT 1 FROM terms LIMIT 1").fetchone() and db.execute("SELECT 1 FROM entities LIMIT 1").fetchone():
+        terms.rebuild(db)
     db.commit()
 
 
@@ -194,6 +204,8 @@ def upsert(db: sqlite3.Connection, batch: dict, origin_id: int, vocab: dict) -> 
             "  description=CASE WHEN excluded.description != '' THEN excluded.description ELSE description END",
             (eid, name, normalise(name), type_, desc, n.get("scope") or default_scope, origin_id, now, now))
         local[normalise(name)] = eid
+        stored_name, stored_desc = db.execute("SELECT name, description FROM entities WHERE id=?", (eid,)).fetchone()
+        terms.index_entity(db, eid, stored_name, stored_desc)
         report["nodes"] += 1
 
     def resolve(name: str) -> str | None:
@@ -268,6 +280,7 @@ def forget_origin(db: sqlite3.Connection, origin_id: int) -> dict:
         "DELETE FROM entities WHERE origin_id=? AND id NOT IN"
         " (SELECT source_id FROM relations UNION SELECT target_id FROM relations)", (origin_id,)).rowcount
     db.execute("DELETE FROM aliases WHERE entity_id NOT IN (SELECT id FROM entities)")
+    db.execute("DELETE FROM terms WHERE entity_id NOT IN (SELECT id FROM entities)")
     db.execute("DELETE FROM origins WHERE id=?", (origin_id,))
     db.commit()
     return {"relations": rel, "entities": ent}

@@ -4,8 +4,8 @@ r"""The memory tools Claude can call: memory_search and memory_remember. No mode
     py -I tools.py search QUERY [--cwd DIR] [--hops 2]        facts linked to QUERY, more than the prompt hook gives
     py -I tools.py remember FILE --session ID [--project DIR] add a {nodes, edges, retire} batch Claude wrote
 
-search: the prompt hook's seeding first (names and aliases in QUERY); when that finds nothing, any node whose name or
-description holds a word of QUERY, so "post-process swap" still finds "Post-process AnimBP swap crash".
+search: the prompt hook's seeding first (names and aliases in QUERY); when that finds nothing, the word index's best
+matches (terms.py: stems, synonyms, rare words), and last any node whose name or description holds a word of QUERY, so "post-process swap" still finds "Post-process AnimBP swap crash".
 remember: the same checks as capture (vocabulary, link types, type words in names) and the same origin as this
 session's capture (session:<id>), so /graph-memory-undo and the pane's Undo session take it back out (rule 5).
 Prints one JSON object.
@@ -22,6 +22,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import capture  # noqa: E402
 import recall  # noqa: E402
 import store  # noqa: E402
+import terms  # noqa: E402
 
 SEARCH_FACTS = 40
 SEARCH_CHARS = 6000
@@ -53,7 +54,8 @@ def search(query: str, cwd: str = "", hops: int = 2) -> dict:
         return {"facts": 0, "text": "Memory is empty: nothing has been captured or remembered yet."}
     with closing(db):
         hops = max(1, min(3, hops))
-        seeds = recall._ids_for(db, recall.ngrams(query)) or _word_seeds(db, query)
+        seeds = (recall._ids_for(db, recall.ngrams(query)) or set(terms.fuzzy_seeds(db, query, limit=6))
+                 or _word_seeds(db, query))
         out = recall.recall(query, cwd, hops, db, SEARCH_FACTS, SEARCH_CHARS, seeds=seeds, with_project=False)
     if not out["facts"]:
         return {"facts": 0, "text": f"Nothing in memory matches {query!r}."}

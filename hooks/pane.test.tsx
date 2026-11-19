@@ -43,7 +43,10 @@ function engine(on: Parameters<Parameters<typeof test>[1]>[1], calls: string[][]
   on('fs.write', () => ({ value: undefined }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
-  on('prompt.submit', (_, e) => e)
+  on('prompt.submit', (_, e) => {
+    calls.push(['prompt', e.text])
+    return e
+  })
   on('store.get', () => ({ value: undefined }))
   on('store.set', () => ({ value: undefined }))
   on('store.delete', () => ({ value: undefined }))
@@ -61,7 +64,9 @@ function engine(on: Parameters<Parameters<typeof test>[1]>[1], calls: string[][]
     const out = argv.includes('--version') ? '' : argv.includes('recall.py') ? RECALL
       : argv.includes('clawd.py') ? CLAWD
       : argv.includes('tools.py vocab') ? VOCAB
-      : argv.includes('tools.py search') ? { facts: 1, text: 'Memory facts linked to it: Campfires --[decided]--> Linked anim layer' }
+      : argv.includes('tools.py search') ? { facts: 1, text: 'Memory facts linked to it: Campfires --[decided]--> Linked anim layer', triples: [FACT] }
+      : argv.includes('pane.py links') ? { links: [{ value: 'decided', label: 'Campfires decided Linked anim layer' }, { value: 'avoids', label: 'Campfires avoids Linked anim layer' }] }
+      : argv.includes('pane.py relink') ? { retired: 1, fact: { ...FACT, predicate: 'avoids' } }
       : argv.includes('tools.py remember') ? { facts: 1, nodes: 2, retired: 0, dropped: ["edge 'X' (TOOL) 'about' 'Y'"] }
       : argv.includes('store.py rename') ? { renamed: 's-1-full-id', title: e.argv[e.argv.length - 1] }
       : argv.includes('pane.py state') ? STATE : argv.includes('pane.py forget') ? { retired: 1 } : { files: [] }
@@ -188,4 +193,50 @@ test('/graph-rename passes the session and the whole name; usage without a name'
   expect(calls.find(c => c.join(' ').includes('store.py rename'))?.slice(-3)).toEqual(['last', '--', 'Pixel memory bubble'])
   const usage = await $.command.run({ command: 'graph-rename', args: 'last' } as never)
   expect(usage.text).toContain('Usage')
+})
+
+test('search lists matching facts, and Clear puts the pane back', { options: { capture: false } }, async ($, on) => {
+  const calls: string[][] = []
+  engine(on, calls)
+  await $.session.start({ cwd: 'C:/mods/Campfires', surface: 'desktop', isInteractive: true })
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ ...PANE, surface })
+    await ui.input({ key: 'search', text: 'anim layer' })
+    expect(calls.find(c => c.join(' ').includes('tools.py search'))?.slice(-2)).toEqual(['--', 'anim layer'])
+    expect((await ui.find({ type: 'Text', text: /Search: anim layer/ }))?.text).toBeTruthy()
+    expect((await ui.find({ type: 'Text', text: /Linked anim layer/ }))?.text).toContain('decided')
+    await ui.press({ key: 'search-clear' })
+    expect(await ui.find({ type: 'Text', text: /Search: anim layer/ })).toBeFalsy()
+    await ui.unmount()
+  }
+})
+
+test('Fix offers the allowed links and saves the one picked', { options: { capture: false } }, async ($, on) => {
+  const calls: string[][] = []
+  engine(on, calls)
+  await $.session.start({ cwd: 'C:/mods/Campfires', surface: 'desktop', isInteractive: true })
+  await $.prompt.submit({ text: 'why did Campfires crash?' })
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  await ui.press({ key: 'fix:u:a|decided|b' })
+  expect(calls.some(c => c.join(' ').includes('pane.py links a b'))).toBe(true)
+  await ui.select({ key: 'fix-link', value: 'avoids' } as never)
+  const ran = calls.find(c => c.join(' ').includes('pane.py relink'))?.join(' ')
+  expect(ran).toContain('relink a decided b avoids --session sess-1')
+  expect((await ui.find({ type: 'Text', text: /Linked anim layer/ }))?.text).toContain('avoids')
+  expect(await ui.find({ key: 'fix-link' })).toBeFalsy()
+  await ui.unmount()
+})
+
+test('Fix can hand a correction to Claude as a message', { options: { capture: false } }, async ($, on) => {
+  const calls: string[][] = []
+  engine(on, calls)
+  await $.session.start({ cwd: 'C:/mods/Campfires', surface: 'desktop', isInteractive: true })
+  await $.prompt.submit({ text: 'why did Campfires crash?' })
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  await ui.press({ key: 'fix:u:a|decided|b' })
+  await ui.input({ key: 'fix-tell', text: 'We dropped the linked layer in build 5.' })
+  const sent = calls.filter(c => c[0] === 'prompt').map(c => c[1]).pop() ?? ''
+  expect(sent).toContain('"Campfires decided Linked anim layer" is wrong. We dropped the linked layer in build 5.')
+  expect(sent).toContain('memory_remember')
+  await ui.unmount()
 })
