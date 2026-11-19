@@ -68,6 +68,8 @@ function engine(on: Parameters<Parameters<typeof test>[1]>[1], calls: string[][]
       : argv.includes('pane.py links') ? { links: [{ value: 'decided', label: 'Campfires decided Linked anim layer' }, { value: 'avoids', label: 'Campfires avoids Linked anim layer' }] }
       : argv.includes('pane.py relink') ? { retired: 1, fact: { ...FACT, predicate: 'avoids' } }
       : argv.includes('tools.py remember') ? { facts: 1, nodes: 2, retired: 0, dropped: ["edge 'X' (TOOL) 'about' 'Y'"] }
+      : argv.includes('sync.py export') ? { exported: 'C:\\Users\\me\\Downloads\\graphcraft-memory-2026-11-19.json', nodes: 74, facts: 82, sources: 6 }
+      : argv.includes('sync.py import') ? { imported: e.argv[e.argv.length - 1], backup: 'C:/x/graph.before-import.db', nodes: 3, facts: 5, sources: 1, retired: 1 }
       : argv.includes('store.py rename') ? { renamed: 's-1-full-id', title: e.argv[e.argv.length - 1] }
       : argv.includes('pane.py state') ? STATE : argv.includes('pane.py forget') ? { retired: 1 } : { files: [] }
     return {
@@ -255,4 +257,19 @@ test('Fix on a fact that is both recalled and searched draws one box, and the pa
     expect((await ui.find({ type: 'Text', text: /Used for this prompt/ }))?.text).toBeTruthy()
     await ui.unmount()
   }
+})
+
+test('/graph-export and /graph-import carry memory between PCs', { options: { capture: false } }, async ($, on) => {
+  const calls: string[][] = []
+  engine(on, calls)
+  await $.session.start({ cwd: 'C:/mods/Campfires', surface: 'terminal', isInteractive: true })
+  const saved = await $.command.run({ command: 'graph-export', args: '' } as never)
+  expect(saved.text).toContain('82 facts')
+  expect(saved.text).toContain('C:/Users/me/Downloads/graphcraft-memory-2026-11-19.json')
+  expect(calls.find(c => c.join(' ').includes('sync.py export'))?.slice(-1)).toEqual(['export'])
+  const merged = await $.command.run({ command: 'graph-import', args: '"D:/USB/my memory.json"' } as never)
+  expect(calls.find(c => c.join(' ').includes('sync.py import'))?.slice(-1)).toEqual(['D:/USB/my memory.json'])
+  expect(merged.text).toContain('+5 facts')
+  expect(merged.text).toContain('1 fact retired as on the other PC')
+  expect((await $.command.run({ command: 'graph-import', args: '' } as never)).text).toContain('Usage')
 })

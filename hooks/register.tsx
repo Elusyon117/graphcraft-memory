@@ -10,6 +10,7 @@ import type { Clawd, Fixing, PaneFact, PaneView, Searched, Used } from '../types
 //   background with a small model, and tell the user
 // - /graph-memory, /graph-memory-undo, /graph-view: see what was learned, take a session back out, open the map
 // - /graph-rename (and Rename in the pane): give a session your own name; a later capture never replaces it
+// - /graph-export, /graph-import: carry memory to another PC as one file; import merges (graph/sync.py)
 // - the Memory pane (/graph-pane): search memory, facts used for the prompt, facts learned last session, open
 //   problems; Forget or Fix any fact (Fix: pick the right link, or tell Claude what is true);
 //   and a brief band above the prompt until the first message
@@ -388,6 +389,14 @@ export const register: Register = (on, options) => {
     })
     await $.command.register({ name: 'graph-pane', description: 'graphcraft-memory: open the Memory pane' })
     await $.command.register({
+      name: 'graph-export',
+      description: 'graphcraft-memory: save all memory to one file to take to another PC (default: Downloads)',
+    })
+    await $.command.register({
+      name: 'graph-import',
+      description: 'graphcraft-memory: merge a /graph-export file from another PC into this one',
+    })
+    await $.command.register({
       name: 'graph-rename',
       description: 'graphcraft-memory: name a session: /graph-rename <session id or last> <name>',
     })
@@ -738,6 +747,30 @@ export const register: Register = (on, options) => {
   })
 
   on('command.run', { command: 'graph-memory' }, async $ => ({ text: await memoryReport($) }))
+
+  const pathArg = (args: string) => args.trim().replace(/^(["'])(.*)\1$/, '$2')
+
+  on('command.run', { command: 'graph-export' }, async ($, e) => {
+    const out = await runPy($, 'sync.py', ['export', ...(pathArg(e.args) ? [pathArg(e.args)] : [])], CAPTURE_TIMEOUT_MS)
+    if (!out || typeof out.exported !== 'string') return { text: `Nothing exported (${String(out?.error ?? 'is Python 3 installed?')}).` }
+    return {
+      text: `Saved ${plural(Number(out.facts), 'fact')} and ${plural(Number(out.nodes), 'node')} from ` +
+        `${plural(Number(out.sources), 'source')} to:\n${slash(out.exported)}\n` +
+        'Copy it to the other PC (USB stick, cloud folder, email to yourself) and run /graph-import <that file> there.',
+    }
+  })
+
+  on('command.run', { command: 'graph-import' }, async ($, e) => {
+    const file = pathArg(e.args)
+    if (!file) return { text: 'Usage: /graph-import <file from /graph-export>' }
+    const out = await runPy($, 'sync.py', ['import', file], CAPTURE_TIMEOUT_MS)
+    if (!out || typeof out.imported !== 'string') return { text: `Nothing imported (${String(out?.error ?? 'is Python 3 installed?')}).` }
+    await refreshView($)
+    const lines = [`Merged: +${plural(Number(out.facts), 'fact')}, +${plural(Number(out.nodes), 'node')}, ` +
+      `+${plural(Number(out.sources), 'source')}` + (Number(out.retired) ? `, ${plural(Number(out.retired), 'fact')} retired as on the other PC` : '') + '.']
+    if (out.backup) lines.push(`This PC's memory before the import is kept at ${slash(String(out.backup))}`)
+    return { text: lines.join('\n') }
+  })
 
   on('command.run', { command: 'graph-rename' }, async ($, e) => {
     const m = /^(\S+)\s+([\s\S]+)$/.exec(e.args.trim())

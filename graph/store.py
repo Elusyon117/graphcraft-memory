@@ -6,6 +6,7 @@ r"""The graph store: one SQLite file per machine, upserts only.
     py -I store.py forget-origin ID                      remove everything one origin added
     py -I store.py rename SESSION TITLE                  name a session (an id, its first characters, or "last")
     py -I store.py stats                                 counts
+(Moving the graph to another PC: sync.py.)
 
 The database is ~/.claude/graphcraft-memory/graph.db (CLAUDE_CONFIG_DIR if set), or GRAPHCRAFT_DB when set (tests).
 
@@ -42,7 +43,7 @@ CREATE TABLE IF NOT EXISTS entities (
   origin_id INTEGER, created REAL NOT NULL, updated REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS relations (
   source_id TEXT NOT NULL, predicate TEXT NOT NULL, target_id TEXT NOT NULL, origin_id INTEGER NOT NULL,
-  created REAL NOT NULL, retired REAL,
+  created REAL NOT NULL, retired REAL,  -- created: when the fact was last said
   UNIQUE(source_id, predicate, target_id, origin_id));
 CREATE TABLE IF NOT EXISTS aliases (
   entity_id TEXT NOT NULL, alias TEXT NOT NULL, norm TEXT NOT NULL, UNIQUE(entity_id, norm));
@@ -235,8 +236,10 @@ def upsert(db: sqlite3.Connection, batch: dict, origin_id: int, vocab: dict) -> 
             continue
         db.execute("INSERT OR IGNORE INTO relations(source_id, predicate, target_id, origin_id, created)"
                    " VALUES (?,?,?,?,?)", (s, p, t, origin_id, now))
-        db.execute("UPDATE relations SET retired=NULL WHERE source_id=? AND predicate=? AND target_id=?"
-                   " AND origin_id=?", (s, p, t, origin_id))
+        # a fact said again is live again, and `created` becomes when it was last said: an import from another PC
+        # can then tell it was said after it was retired there (sync.py: the latest event wins)
+        db.execute("UPDATE relations SET retired=NULL, created=? WHERE source_id=? AND predicate=? AND target_id=?"
+                   " AND origin_id=?", (now, s, p, t, origin_id))
         report["edges"] += 1
         report["stored"].append((s, p, t))
 

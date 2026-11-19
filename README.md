@@ -51,7 +51,9 @@ Nothing to run once installed:
 3. **At your next session start:** a small model (Haiku by default) turns it into facts in the background, and a
    toast says how many it learned.
 
-Commands: `/graph-memory` shows what is remembered and recent captures; `/graph-memory-undo` takes the last session's
+Commands: `/graph-export` saves all memory to one file (in Downloads) and `/graph-import <file>` merges it on another
+PC, so your gaming PC and laptop can share what Claude remembers (import keeps a copy of the graph first, and the
+same file imported twice changes nothing); `/graph-memory` shows what is remembered and recent captures; `/graph-memory-undo` takes the last session's
 facts back out (or `/graph-memory-undo <session id>`); `/graph-view` opens an offline map of the whole graph in your
 browser (structured or free layout, a "Why chains" filter, click a node for its facts), with a **Timeline** tab:
 every session newest first, what it taught and what has been retired since, and "Show on map" to light just its facts.

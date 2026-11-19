@@ -38,6 +38,14 @@ Code would each see a different graph. Standard library only.
 - `retired`: facts are not deleted when they stop being true (a bug gets fixed); they are retired with a date, so
   recall can skip them and history stays readable.
 - Upserts only. Nothing rebuilds the database from scratch (the reference starter did; a growing memory cannot).
+- A relation's `created` is when the fact was last said: saying it again (or after it was retired) moves it to now.
+
+**Moving between PCs** (`graph/sync.py`, `/graph-export` and `/graph-import`): the graph is per machine, so it travels
+as one JSON file (default in Downloads, never in the repo). Import merges, never replaces, and keeps a copy of the
+graph first (the newest three). Nodes match by their content-addressed id, sources by (kind, ref), so every fact keeps
+its source and undo still works after a move. Where both PCs know a fact, the latest event wins (said, or retired);
+a session name the user gave wins over the model's; the more recently updated description wins. Importing the same
+file again changes nothing, so two PCs can swap files back and forth.
 
 ### 2. Recall (the `UserPromptSubmit` hook)
 1. **Seed:** match words and phrases in the prompt against entity names and aliases. Add the current project's

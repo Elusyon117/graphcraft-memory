@@ -142,8 +142,8 @@ def relink(source_id: str, predicate: str, target_id: str, new: str, session: st
         oid = store.add_origin(db, "session", session, project)
         db.execute("INSERT OR IGNORE INTO relations(source_id, predicate, target_id, origin_id, created) VALUES (?,?,?,?,?)",
                    (s, p, t, oid, time.time()))
-        db.execute("UPDATE relations SET retired=NULL WHERE source_id=? AND predicate=? AND target_id=? AND origin_id=?",
-                   (s, p, t, oid))
+        db.execute("UPDATE relations SET retired=NULL, created=? WHERE source_id=? AND predicate=? AND target_id=?"
+                   " AND origin_id=? AND retired IS NOT NULL", (time.time(), s, p, t, oid))
         db.commit()
         (sn, _), (tn, _) = _node(db, s), _node(db, t)
         capture._log({"event": "corrected", "sessionId": session, "project": project, "facts": 1, "retired": retired})
