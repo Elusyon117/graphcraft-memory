@@ -100,7 +100,7 @@ def _degree(db, eid: str) -> int:
 
 def recall(prompt: str, cwd: str = "", hops: int = 2, db=None) -> dict:
     t0 = time.perf_counter()
-    empty = {"facts": 0, "ms": 0.0, "summary": "", "context": "", "triples": []}
+    empty = {"facts": 0, "ms": 0.0, "summary": "", "context": "", "triples": [], "matched": [], "more": 0}
     if db is None:
         db = store.connect(create=False)
         if db is None:
@@ -112,6 +112,7 @@ def recall(prompt: str, cwd: str = "", hops: int = 2, db=None) -> dict:
     if not seeds:  # nothing named: the project alone would only add noise
         empty["ms"] = (time.perf_counter() - t0) * 1000
         return empty
+    named = sorted(seeds)
     seeds |= project_seed(db, cwd)
     depth = walk(db, seeds, hops)
     ids = list(depth)
@@ -138,7 +139,8 @@ def recall(prompt: str, cwd: str = "", hops: int = 2, db=None) -> dict:
             continue
         seen.add(key)
         triples.append({"source": row[0], "predicate": row[1], "target": row[2],
-                        "origin": f"{row[5]}:{row[6]}", "near": rank(row)[0]})
+                        "origin": f"{row[5]}:{row[6]}", "near": rank(row)[0],
+                        "source_id": row[3], "target_id": row[4]})
         used |= {row[3], row[4]}
 
     lines, size = [], len(HEADER)
@@ -163,8 +165,10 @@ def recall(prompt: str, cwd: str = "", hops: int = 2, db=None) -> dict:
         empty["ms"] = ms
         return empty
     context = HEADER + "\n\n" + "\n".join(lines) + ("\n\nwhere:\n" + "\n".join(notes) if notes else "")
+    marks = ",".join("?" * len(named))
+    matched = [r[0] for r in db.execute(f"SELECT name FROM entities WHERE id IN ({marks})", named)]  # noqa: S608
     return {"facts": len(lines), "ms": ms, "summary": f"memory: {len(lines)} facts, {ms:.0f} ms",
-            "context": context, "triples": kept}
+            "context": context, "triples": kept, "matched": matched, "more": len(triples) - len(kept)}
 
 
 def main(argv=None) -> int:

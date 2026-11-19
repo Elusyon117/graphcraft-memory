@@ -179,6 +179,14 @@ def retire(db: sqlite3.Connection, source: str, predicate: str, target: str) -> 
     return cur.rowcount
 
 
+def retire_ids(db: sqlite3.Connection, source_id: str, predicate: str, target_id: str) -> int:
+    """retire() by node ids, for the pane: a name shared by two types cannot pick the wrong node."""
+    cur = db.execute("UPDATE relations SET retired=? WHERE source_id=? AND predicate=? AND target_id=?"
+                     " AND retired IS NULL", (time.time(), source_id, predicate, target_id))
+    db.commit()
+    return cur.rowcount
+
+
 def forget_origin(db: sqlite3.Connection, origin_id: int) -> dict:
     """Remove what one origin added: its relations, then nodes it created that nothing links any more."""
     rel = db.execute("DELETE FROM relations WHERE origin_id=?", (origin_id,)).rowcount

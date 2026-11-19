@@ -52,7 +52,10 @@ Nothing to run once installed:
 
 Commands: `/graph-memory` shows what is remembered and recent captures; `/graph-memory-undo` takes the last session's
 facts back out (or `/graph-memory-undo <session id>`); `/graph-view` opens an offline map of the whole graph in your
-browser (structured or free layout, a "Why chains" filter, click a node for its facts). Settings: `capture` (on/off) and `extractModel`
+browser (structured or free layout, a "Why chains" filter, click a node for its facts). The **Memory pane** opens beside
+the chat: the facts used for your last prompt (Forget), what the last session taught it (Keep, Drop, Undo session) and
+this project's problems; close it and `/graph-pane` brings it back. A one-line brief of the project sits above the prompt
+until your first message. Settings: `capture` (on/off) and `extractModel`
 (`haiku`/`sonnet`).
 
 Needs Python 3 (standard library only).

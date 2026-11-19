@@ -1,10 +1,15 @@
+import { atom, read, update } from 'claude-code'
 import type { EngineInterface as Engine, Register } from 'claude-code'
+
+import type { PaneFact, PaneView, Used } from '../types'
 
 // graphcraft-memory, the mod side. Python (graph/) owns the graph; this module only decides when things run:
 // - prompt.submit: recall the facts linked to the prompt and attach them as context (never blocks a prompt)
 // - turn.complete: keep a draft of the conversation; session.end marks it finished; session.compact queues it
 // - session.start: extract queued conversations in the background with a small model, then tell the user
 // - /graph-memory, /graph-memory-undo, /graph-view: see what was learned, take a session back out, open the map
+// - the Memory pane (/graph-pane): facts used for the prompt, facts learned last session, open problems;
+//   and a brief band above the prompt until the first message
 
 const CANDIDATES: readonly (readonly string[])[] = [['py', '-3'], ['python3'], ['python']]
 const RECALL_TIMEOUT_MS = 5000
@@ -14,6 +19,16 @@ const EXTRACT_MAX_TOKENS = 4096
 
 type Json = Record<string, unknown>
 type Turn = { role: string; text: string }
+
+const PANE = 'memory'
+// The terminal seats the pane inline in about a third of the screen: keep it short enough that the buttons show.
+const PANE_ROWS = 22
+const SHOW_USED = 6
+const SHOW_LEARNED = 5
+// Change a tag when that value's fields change: it declines what an earlier version stored, which outlives a reload.
+const used = atom({ plugin: 'graphcraft-memory', key: 'used' } as const, null, { shape: 'used-1' })
+const view = atom({ plugin: 'graphcraft-memory', key: 'view' } as const, null, { shape: 'view-1' })
+const briefShown = atom({ plugin: 'graphcraft-memory', key: 'briefShown' } as const, true, { shape: 'brief-1' })
 
 // Found once per load; undefined = not looked yet, null = no Python 3 on this machine.
 let python: readonly string[] | null | undefined
@@ -165,6 +180,41 @@ async function memoryReport($: Engine): Promise<string> {
   return lines.join('\n')
 }
 
+const factKey = (f: PaneFact) => `${f.source_id}|${f.predicate}|${f.target_id}`
+
+/** Facts the person pressed Keep on, for the session they came from: they leave the Learned list. */
+async function keptKeys($: Engine, sessionId: string): Promise<string[]> {
+  const kept = (await $.store.get('kept')) as { sessionId?: string; keys?: string[] } | undefined
+  return kept?.sessionId === sessionId && Array.isArray(kept.keys) ? kept.keys : []
+}
+
+async function keep($: Engine, sessionId: string, keys: readonly string[]): Promise<void> {
+  const all = [...new Set([...(await keptKeys($, sessionId)), ...keys])]
+  await $.store.set('kept', { sessionId, keys: all })
+  await update($, view, v =>
+    v?.learned ? { ...v, learned: { ...v.learned, facts: v.learned.facts.filter(f => !all.includes(factKey(f))) } } : v,
+  )
+}
+
+/** Reads graph/pane.py state into the pane's value; leaves the old value on a failure. */
+async function refreshView($: Engine): Promise<void> {
+  const out = await runPy($, 'pane.py', ['state', '--cwd', await $.session.cwd()], CAPTURE_TIMEOUT_MS)
+  if (!out || typeof out.error === 'string') return
+  const next = out as unknown as PaneView
+  if (next.learned) {
+    const kept = await keptKeys($, next.learned.sessionId)
+    next.learned = { ...next.learned, facts: next.learned.facts.filter(f => !kept.includes(factKey(f))) }
+  }
+  await update($, view, () => next)
+}
+
+async function forgetFact($: Engine, f: PaneFact): Promise<void> {
+  await runPy($, 'pane.py', ['forget', f.source_id, f.predicate, f.target_id], CAPTURE_TIMEOUT_MS)
+  const k = factKey(f)
+  await update($, used, u => (u ? { ...u, facts: u.facts.filter(x => factKey(x) !== k) } : u))
+  await refreshView($)
+}
+
 export const register: Register = (on, options) => {
   const model = typeof options.extractModel === 'string' && options.extractModel ? options.extractModel : 'haiku'
   const isCapturing = options.capture !== false
@@ -186,9 +236,20 @@ export const register: Register = (on, options) => {
       $.ui.log(`graphcraft-memory: recall failed: ${r.stderr.slice(0, 300)}`, { to: 'debug' })
       return next(e)
     }
-    const out = JSON.parse(r.stdout) as { facts: number; summary: string; context: string; db: string; prompt_chars: number }
+    const out = JSON.parse(r.stdout) as {
+      facts: number
+      summary: string
+      context: string
+      db: string
+      prompt_chars: number
+      triples?: PaneFact[]
+      matched?: string[]
+      more?: number
+    }
     $.ui.log(`graphcraft-memory: ${out.facts} facts from ${out.db} (prompt ${out.prompt_chars} chars)`, { to: 'debug' })
     $.ui.status(out.facts > 0 ? out.summary : undefined)
+    await update($, used, () => ({ matched: out.matched ?? [], more: out.more ?? 0, facts: out.triples ?? [] }))
+    await update($, briefShown, () => false)
     if (out.facts === 0) return next(e)
     return next({ ...e, context: [...(e.context ?? []), out.context] })
   })
@@ -204,9 +265,141 @@ export const register: Register = (on, options) => {
       name: 'graph-view',
       description: 'graphcraft-memory: open the memory map in your browser (optionally: a project name)',
     })
+    await $.command.register({ name: 'graph-pane', description: 'graphcraft-memory: open the Memory pane' })
     const started = await next(e)
-    if (isCapturing) void drain($, model)
+    void (async () => {
+      await refreshView($)
+      // The pane opens by itself until the person closes it; /graph-pane brings it back.
+      if ((await $.store.get('paneClosed')) !== true) await $.ui.open({ id: PANE, title: 'Memory', rows: PANE_ROWS })
+      if (isCapturing) {
+        await drain($, model)
+        await refreshView($)
+      }
+    })().catch(err => $.ui.log(`graphcraft-memory: session start: ${String(err).slice(0, 200)}`, { to: 'debug' }))
     return started
+  })
+
+  on('command.run', { command: 'graph-pane' }, async $ => {
+    await $.store.delete('paneClosed')
+    await refreshView($)
+    const opened = await $.ui.open({ id: PANE, title: 'Memory', rows: PANE_ROWS })
+    return {
+      text: opened.isPlaced
+        ? 'graphcraft-memory: Memory pane opened.'
+        : `graphcraft-memory: the Memory pane is waiting for room (${opened.reason}). /graph-memory shows the same in text.`,
+    }
+  })
+
+  on('ui.close', async ($, e, next) => {
+    if (e.id === PANE && e.origin === 'person') await $.store.set('paneClosed', true).catch(() => undefined)
+    return next(e)
+  })
+
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    const v = await read($, view)
+    if (!(await read($, briefShown)) || !v?.brief) return next(e)
+    const { Box, Text, Button } = $.ui.resolve(e)
+    return (
+      <Box flexDirection="row" gap={1}>
+        <Text dimColor>memory</Text>
+        <Text>{v.brief}</Text>
+        <Button role="dismiss" label="Hide" dimColor onPress={() => void update($, briefShown, () => false)} />
+      </Box>
+    )
+  })
+
+  on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
+    const { Box, Text, Button } = $.ui.resolve(e)
+    try {
+    const u = await read($, used)
+    const v = await read($, view)
+    const fact = (f: PaneFact) => (
+      <Text wrap="wrap">
+        {f.source} <Text dimColor>{f.predicate}</Text> {f.target}
+      </Text>
+    )
+    const heading = (text: string) => <Text bold>{text}</Text>
+    const learned = v?.learned
+    return (
+      <Box flexDirection="column" gap={1}>
+        <Box flexDirection="row" justifyContent="space-between">
+          <Text bold>{v?.project || 'Memory'}</Text>
+          <Button
+            label="Open map"
+            dimColor
+            onPress={() => void runPy($, 'view.py', ['build', '--open'], CAPTURE_TIMEOUT_MS)}
+          />
+        </Box>
+
+        <Box flexDirection="column">
+          {heading(
+            'Used for this prompt' + (u && u.matched.length > 0 ? ` · matched ${u.matched.map(m => `"${m}"`).join(', ')}` : ''),
+          )}
+          {!u && <Text dimColor>Send a message: the facts recalled for it show here.</Text>}
+          {u && u.facts.length === 0 && <Text dimColor>Nothing in memory is linked to the last message.</Text>}
+          {(u?.facts ?? []).slice(0, SHOW_USED).map(f => (
+            <Box key={`u:${factKey(f)}`} flexDirection="row" justifyContent="space-between" gap={1}>
+              {fact(f)}
+              <Button key={`forget:${factKey(f)}`} label="Forget" dimColor onPress={() => void forgetFact($, f)} />
+            </Box>
+          ))}
+          {u && u.facts.length - SHOW_USED + u.more > 0 && (
+            <Text dimColor>+{u.facts.length - SHOW_USED + u.more} more · all in /graph-view</Text>
+          )}
+        </Box>
+
+        {learned && (
+          <Box flexDirection="column">
+            {heading(`Learned last session · ${plural(learned.total, 'fact')}`)}
+            {learned.facts.length === 0 && <Text dimColor>All reviewed.</Text>}
+            {learned.facts.slice(0, SHOW_LEARNED).map(f => (
+              <Box key={`l:${factKey(f)}`} flexDirection="row" justifyContent="space-between" gap={1}>
+                {fact(f)}
+                <Box flexDirection="row" gap={1}>
+                  <Button key={`keep:${factKey(f)}`} label="Keep" dimColor onPress={() => void keep($, learned.sessionId, [factKey(f)])} />
+                  <Button key={`drop:${factKey(f)}`} label="Drop" dimColor onPress={() => void forgetFact($, f)} />
+                </Box>
+              </Box>
+            ))}
+            {learned.facts.length > SHOW_LEARNED && (
+              <Text dimColor>+{learned.facts.length - SHOW_LEARNED} more to review</Text>
+            )}
+            {learned.facts.length > 0 && (
+              <Box flexDirection="row" gap={1}>
+                <Button label="Keep all" onPress={() => void keep($, learned.sessionId, learned.facts.map(factKey))} />
+                <Button
+                  label="Undo session"
+                  onPress={() =>
+                    void (async () => {
+                      const out = await runPy($, 'capture.py', ['undo', learned.sessionId], CAPTURE_TIMEOUT_MS)
+                      $.ui.toast(`memory: removed ${plural(Number(out?.relations ?? 0), 'fact')} from that session`)
+                      await refreshView($)
+                    })()
+                  }
+                />
+              </Box>
+            )}
+          </Box>
+        )}
+
+        {v && v.problems.length > 0 && (
+          <Box flexDirection="column">
+            {heading(`Problems · ${v.project}`)}
+            {v.problems.map(p => (
+              <Text key={`p:${p.name}`} wrap="wrap">
+                <Text color={p.fixed ? 'success' : 'warning'}>{p.fixed ? 'fixed' : 'open'}</Text> {p.name}
+                {p.fixed && p.fixedBy ? <Text dimColor> · by {p.fixedBy}</Text> : ''}
+              </Text>
+            ))}
+          </Box>
+        )}
+      </Box>
+    )
+    } catch (err) {
+      // Logged and shown, so a pane that draws nothing can be told from one with nothing to show.
+      $.ui.log(`graphcraft-memory: pane failed to draw: ${String(err).slice(0, 300)}`, { to: 'debug' })
+      return <Text color="error">Memory pane could not draw: {String(err).slice(0, 200)}</Text>
+    }
   })
 
   on('command.run', { command: 'graph-memory' }, async $ => ({ text: await memoryReport($) }))

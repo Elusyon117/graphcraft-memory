@@ -1,11 +1,20 @@
 {
   "name": "graphcraft-memory",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Knowledge-graph memory for Claude Code: facts from every session are linked into one graph per machine, and the relevant part is handed to Claude before each prompt. Other mods (like zonecraft) can feed it.",
-  "author": { "name": "Elusyon117", "url": "https://github.com/Elusyon117" },
+  "author": {
+    "name": "Elusyon117",
+    "url": "https://github.com/Elusyon117"
+  },
   "repository": "https://github.com/Elusyon117/graphcraft-memory",
   "license": "MIT",
-  "keywords": ["memory", "knowledge-graph", "recall", "sqlite"],
+  "types": "./types/index.d.ts",
+  "keywords": [
+    "memory",
+    "knowledge-graph",
+    "recall",
+    "sqlite"
+  ],
   "userConfig": {
     "capture": {
       "type": "boolean",
@@ -17,7 +26,10 @@
       "type": "string",
       "title": "Extraction model",
       "description": "The model that reads saved conversations. haiku: cheap and fast. sonnet: catches subtler facts, costs more.",
-      "options": ["haiku", "sonnet"],
+      "options": [
+        "haiku",
+        "sonnet"
+      ],
       "default": "haiku"
     }
   }
