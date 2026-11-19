@@ -2,7 +2,6 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface as Engine, Register } from 'claude-code'
 
 import type { Clawd, PaneFact, PaneView, Used } from '../types'
-import { clawdSvg } from './clawd'
 
 // graphcraft-memory, the mod side. Python (graph/) owns the graph; this module only decides when things run:
 // - prompt.submit: recall the facts linked to the prompt and attach them as context (never blocks a prompt)
@@ -29,7 +28,7 @@ const SHOW_LEARNED = 5
 // Change a tag when that value's fields change: it declines what an earlier version stored, which outlives a reload.
 const used = atom({ plugin: 'graphcraft-memory', key: 'used' } as const, null, { shape: 'used-1' })
 const view = atom({ plugin: 'graphcraft-memory', key: 'view' } as const, null, { shape: 'view-1' })
-const clawd = atom({ plugin: 'graphcraft-memory', key: 'clawd' } as const, null, { shape: 'clawd-1' })
+const clawd = atom({ plugin: 'graphcraft-memory', key: 'clawd' } as const, null, { shape: 'clawd-2' })
 const briefShown = atom({ plugin: 'graphcraft-memory', key: 'briefShown' } as const, true, { shape: 'brief-1' })
 
 // Found once per load; undefined = not looked yet, null = no Python 3 on this machine.
@@ -271,9 +270,9 @@ export const register: Register = (on, options) => {
     const started = await next(e)
     void (async () => {
       await refreshView($)
-      // Clawd from the clawd-pet mod's frames, if it is installed; the pane draws its own Clawd meanwhile or without it.
+      // Clawd and his memory bubble (graph/clawd.py): the clawd-pet mod's frames when installed, else a stand-in.
       const art = await runPy($, 'clawd.py', ['svg'], CAPTURE_TIMEOUT_MS)
-      if (art && typeof art.source === 'string' && art.source) await update($, clawd, () => art as unknown as Clawd)
+      if (art?.lit && art.idle) await update($, clawd, () => art as unknown as Clawd)
       // The pane opens by itself until the person closes it; /graph-pane brings it back.
       if ((await $.store.get('paneClosed')) !== true) await $.ui.open({ id: PANE, title: 'Memory', rows: PANE_ROWS })
       if (isCapturing) {
@@ -375,12 +374,12 @@ export const register: Register = (on, options) => {
               {note(subtitle)}
             </Box>
             <Box flexDirection="row" alignItems="center" columnGap="sm" flexShrink={0}>
-              {'Svg' in el && (
+              {'Svg' in el && pet && (
                 <el.Svg
-                  source={pet ? pet[usedFacts.length > 0 ? 'lit' : 'idle'].svg : clawdSvg(usedFacts.length > 0)}
-                  alt={usedFacts.length > 0 ? 'Clawd with an idea: memories recalled' : 'Clawd looking around'}
-                  width={pet ? pet.lit.width : 64}
-                  height={pet ? pet.lit.height : 40}
+                  source={pet[usedFacts.length > 0 ? 'lit' : 'idle'].svg}
+                  alt={usedFacts.length > 0 ? 'Clawd thinking: a memory graph builds in his bubble' : 'Clawd looking around, memories forming'}
+                  width={pet.lit.width}
+                  height={pet.lit.height}
                 />
               )}
               <Button

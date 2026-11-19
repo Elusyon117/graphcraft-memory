@@ -16,6 +16,9 @@ const RECALL = {
   triples: [FACT], matched: ['Campfires'], more: 0,
 }
 
+const ART = (name: string) => ({ svg: `<svg xmlns="http://www.w3.org/2000/svg"><title>${name}</title></svg>`, width: 77, height: 64 })
+const CLAWD = { lit: ART('lit'), idle: ART('idle'), source: 'own' }
+
 const PANE = {
   plugin: 'graphcraft-memory',
   component: 'Pane',
@@ -50,6 +53,7 @@ function engine(on: Parameters<Parameters<typeof test>[1]>[1], calls: string[][]
     calls.push([...e.argv])
     const argv = e.argv.join(' ')
     const out = argv.includes('--version') ? '' : argv.includes('recall.py') ? RECALL
+      : argv.includes('clawd.py') ? CLAWD
       : argv.includes('pane.py state') ? STATE : argv.includes('pane.py forget') ? { retired: 1 } : { files: [] }
     return {
       value: {

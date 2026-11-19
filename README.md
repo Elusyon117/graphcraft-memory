@@ -54,8 +54,9 @@ Commands: `/graph-memory` shows what is remembered and recent captures; `/graph-
 facts back out (or `/graph-memory-undo <session id>`); `/graph-view` opens an offline map of the whole graph in your
 browser (structured or free layout, a "Why chains" filter, click a node for its facts). The **Memory pane** opens beside
 the chat: the facts used for your last prompt (Forget), what the last session taught it (Keep, Drop, Undo session) and
-this project's problems; close it and `/graph-pane` brings it back. With the clawd-pet mod installed, the pane's Clawd
-uses that mod's animations (read from your install, never copied here); without it, a small Clawd of its own. A one-line brief of the project sits above the prompt
+this project's problems; close it and `/graph-pane` brings it back. Clawd sits in the corner with a memory bubble: when
+facts were recalled, a little graph builds itself in it as recall walks the links. With the clawd-pet mod installed,
+Clawd himself uses that mod's frames (read from your install, never copied here); without it, a stand-in Clawd. A one-line brief of the project sits above the prompt
 until your first message. Settings: `capture` (on/off) and `extractModel`
 (`haiku`/`sonnet`).
 
