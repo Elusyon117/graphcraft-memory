@@ -7,7 +7,7 @@ Read it before changing the schema, the vocabulary or the feeder contract.
 - `.claude-plugin/`: plugin and marketplace manifests.
 - `hooks/`: the mod's TypeScript modules (`hooks.json` lists them), same style as rich-blocks and zonecraft.
 - `graph/`: Python, standard library only: `store.py` (schema, upserts), `recall.py` (seed + walk), `capture.py`
-  (session digest → extraction → upsert), `feeders.py` (discover and run other mods' feeders).
+  (session digest → extraction → upsert), `feeders.py` (discover other mods' feeders, run their adapters on the files they leave).
 - `vocabulary/core.json`: the closed list of entity types and predicates.
 - `tests/`: deterministic tests on a small fixture graph.
 

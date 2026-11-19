@@ -177,7 +177,7 @@ def upsert(db: sqlite3.Connection, batch: dict, origin_id: int, vocab: dict) -> 
     """Add a batch. Returns {"nodes", "edges", "aliases": counts added or refreshed, "dropped": [reasons]}."""
     now = time.time()
     default_scope = batch.get("scope") or "global"
-    report = {"nodes": 0, "edges": 0, "aliases": 0, "dropped": []}
+    report = {"nodes": 0, "edges": 0, "aliases": 0, "dropped": [], "stored": []}  # stored: (s, p, t) ids
     local = {}  # normalised name -> id, for this batch
 
     for n in batch.get("nodes", []):
@@ -226,6 +226,7 @@ def upsert(db: sqlite3.Connection, batch: dict, origin_id: int, vocab: dict) -> 
         db.execute("UPDATE relations SET retired=NULL WHERE source_id=? AND predicate=? AND target_id=?"
                    " AND origin_id=?", (s, p, t, origin_id))
         report["edges"] += 1
+        report["stored"].append((s, p, t))
 
     for a in batch.get("aliases", []):
         eid = resolve(a.get("entity"))

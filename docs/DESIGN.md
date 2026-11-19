@@ -86,17 +86,25 @@ A mod that wants to feed the graph ships `graphcraft/feeder.json` in its plugin 
     {
       "name": "zonecraft",
       "vocabulary": "graphcraft/vocabulary.json",
-      "commands": [
-        { "id": "conflicts", "run": "py -I tools/pak/conflicts.py scan --json", "every": "session-start" },
-        { "id": "crashes",   "run": "...", "every": "session-start" }
-      ],
-      "adapter": "graphcraft/adapter.py"
+      "adapter": "graphcraft/adapter.py",
+      "sources": [
+        { "id": "conflicts", "file": "conflicts.json", "title": "Mod conflicts (zonecraft)" },
+        { "id": "crashes",   "file": "crashes.json",   "title": "Game crashes (zonecraft)" }
+      ]
     }
 
-- graphcraft-memory discovers feeders by scanning installed plugins for `graphcraft/feeder.json`.
-- The mod's own commands keep printing their own JSON. The mod's small `adapter.py` turns that JSON into
-  `{nodes, edges, aliases}`. graphcraft-memory validates the result against core plus the mod's vocabulary, then
-  upserts it with `origin = feeder:<name>:<command>`.
+- **The mod writes, graphcraft-memory reads.** Whenever the mod has something new, it writes each source file into
+  `<data>/feeds/<name>/` (`<data>` = `~/.claude/graphcraft-memory`, or under `CLAUDE_CONFIG_DIR`), and only when
+  `<data>` exists, so a mod without graphcraft-memory installed writes nothing. graphcraft-memory never runs the
+  mod's own commands: zonecraft's conflict scan can take minutes, and its crash watcher reports each crash once, so
+  running them here would slow session start and take crashes away from zonecraft's own band.
+- `graph/feeders.py run` (at session start, in the background) finds feeders in `plugins/installed_plugins.json`,
+  copies each one's vocabulary to `<data>/vocab/feeder-<name>.json` (removed when the mod is uninstalled), and for
+  each source file changed since the last run (size, date, mod version) runs `py -I <adapter> <id> <file>` as its
+  own process (never imported, rule 4). The adapter prints one `{nodes, edges, aliases}` batch, checked against core
+  plus the mod's vocabulary and loaded under the origin `feeder <name>:<id>`.
+- A source is a **snapshot**: facts it gave before and no longer gives are retired, not deleted, and come back if it
+  gives them again. Paths in `feeder.json` must stay inside the mod's folder; a broken adapter is logged, not fatal.
 - No feeder file: nothing happens. No graphcraft-memory installed: the mod ignores its own `graphcraft/` folder.
 
 ## Vocabulary
@@ -111,7 +119,9 @@ A mod that wants to feed the graph ships `graphcraft/feeder.json` in its plugin 
 
 | Entity types | Predicates |
 |---|---|
-| MOD, ASSET, CFG_SID, INPUT_ACTION, CRASH_FAMILY, NEXUS_MOD, CHECKPOINT, KNOWLEDGE_TOPIC | overrides, patches, conflicts_with (wins/risky), crashed_with, is_family, advice_in, tried, failed_because, verified_in, learned_in |
+| MOD, ASSET, CRASH_FAMILY, KNOWLEDGE_TOPIC | overrides, patches, conflicts_with, wins_over, crashed_with, advice_in |
+
+Later sources may add CFG_SID, INPUT_ACTION, NEXUS_MOD, CHECKPOINT and tried, failed_because, verified_in, learned_in.
 
 A mod's vocabulary can add types and predicates but cannot redefine core ones.
 
@@ -119,8 +129,8 @@ A mod's vocabulary can add types and predicates but cannot redefine core ones.
 
 | zonecraft source | Becomes |
 |---|---|
-| `conflicts.py scan --json` | MOD overrides ASSET, MOD conflicts_with MOD (verdict) |
-| `zcwatch.py poll` crashes + `crash_rules.json` | crash is_family CRASH_FAMILY, advice_in KNOWLEDGE_TOPIC |
+| the last conflict scan (`conflicts.json`) | MOD overrides / patches ASSET; the winner wins_over (or, when risky or tied, conflicts_with) each other mod |
+| each crash the watcher classified (`crashes.json`) | MOD crashed_with CRASH_FAMILY (advice in its description), CRASH_FAMILY advice_in KNOWLEDGE_TOPIC |
 | `knowledge/*.md` headings and "Dead ends" / "Crash families" sections | KNOWLEDGE_TOPIC about ASSET, learned_in MOD |
 | each mod's LOG.md / PLAN.md / CLAUDE.md "Current state" | MOD tried X, failed_because Y, CHECKPOINT verified_in MOD |
 | `gamedata.py` | only the SIDs your mods patch (MOD patches CFG_SID); the full prototype tree stays in zonecraft's own index |
@@ -131,7 +141,7 @@ already tried, before Claude replies, and it survives compaction because it is r
 ## Milestones
 1. **Store + recall:** schema, upsert, recursive walk, prompt hook, a fixture graph and tests.
 2. **Capture:** session digest, extraction prompt, validation, upsert.
-3. **Feeder contract:** discovery, validation, the zonecraft adapter (conflicts and crashes first).
+3. **Feeder contract:** discovery, validation, the zonecraft adapter (conflicts and crashes first). Done in 0.8.0.
 4. **Panel:** what was injected this prompt, search the graph, retire or correct a fact.
 5. **Meaning-based seeding** for prompts that name nothing exactly.
 

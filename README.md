@@ -62,6 +62,10 @@ facts were recalled, a little graph builds itself in it as recall walks the link
 Clawd himself uses that mod's frames (read from your install, never copied here); without it, a stand-in Clawd. A
 one-line brief of the project sits above the prompt until your first message.
 
+Other mods can feed it too: with zonecraft installed, its last mod-conflict check and the crashes its watcher
+classified become facts (which mods override or patch which asset, who wins, which crash family hit which mod and where
+the advice is), so "it crashed at the campfire" brings them back. See `docs/DESIGN.md` § Feeders to make a mod a feeder.
+
 Claude also gets two tools: `memory_search` digs further than the automatic recall (by name, or by words when nothing
 is named exactly), and `memory_remember` saves a decision, fix or preference the moment it is settled, under the
 current session, so `/graph-memory-undo` takes it back out like any capture. Settings: `capture` (on/off) and `extractModel`

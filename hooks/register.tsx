@@ -6,7 +6,8 @@ import type { Clawd, PaneFact, PaneView, Used } from '../types'
 // graphcraft-memory, the mod side. Python (graph/) owns the graph; this module only decides when things run:
 // - prompt.submit: recall the facts linked to the prompt and attach them as context (never blocks a prompt)
 // - turn.complete: keep a draft of the conversation; session.end marks it finished; session.compact queues it
-// - session.start: extract queued conversations in the background with a small model, then tell the user
+// - session.start: read other mods' feeder files (graph/feeders.py), then extract queued conversations in the
+//   background with a small model, and tell the user
 // - /graph-memory, /graph-memory-undo, /graph-view: see what was learned, take a session back out, open the map
 // - /graph-rename (and Rename in the pane): give a session your own name; a later capture never replaces it
 // - the Memory pane (/graph-pane): facts used for the prompt, facts learned last session, open problems;
@@ -370,6 +371,15 @@ export const register: Register = (on, options) => {
       if (art?.lit && art.idle) await update($, clawd, () => art as unknown as Clawd)
       // The pane opens by itself until the person closes it; /graph-pane brings it back.
       if ((await $.store.get('paneClosed')) !== true) await $.ui.open({ id: PANE, title: 'Memory', rows: PANE_ROWS })
+      // Other mods' facts (graph/feeders.py): only files that changed since the last session start are read.
+      const fed = await runPy($, 'feeders.py', ['run'], CAPTURE_TIMEOUT_MS)
+      for (const p of Array.isArray(fed?.problems) ? (fed.problems as string[]) : [])
+        $.ui.log(`graphcraft-memory: feeder: ${p}`, { to: 'debug' })
+      if (Number(fed?.facts ?? 0) > 0) {
+        const names = (fed?.loaded as { source: string }[]).map(l => l.source.split(':')[0])
+        $.ui.toast(`memory: ${plural(Number(fed?.facts), 'fact')} from ${[...new Set(names)].join(', ')}`)
+        await refreshView($)
+      }
       if (isCapturing) {
         await drain($, model)
         await refreshView($)
