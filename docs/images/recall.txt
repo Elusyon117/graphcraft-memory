@@ -1,0 +1,27 @@
+> why did we pick resumable uploads for Tidepool?
+
+graphcraft-memory: facts from earlier sessions and installed mods that are linked to this prompt. Use them when relevant; they can be out of date, and what you read in files now wins.
+
+Tidepool --[decided]--> Resumable uploads   (session:654a0668-9e6f-76f9-ef8c-ca8fe930a164)
+Tidepool --[decided]--> Rank by recency   (session:77e7d75f-8ef1-0d84-35d5-80d22e65cc5a)
+Tidepool --[decided]--> Full-text index   (session:3dc739a3-dae2-e3c0-f7b3-f27c444bf9b5)
+Tidepool --[decided]--> Resize on upload   (session:d5382df2-dcd5-d106-ec03-66760e864829)
+Resumable uploads --[because]--> Upload timeouts   (session:654a0668-9e6f-76f9-ef8c-ca8fe930a164)
+Upload timeouts --[fixed_by]--> Resumable uploads   (session:654a0668-9e6f-76f9-ef8c-ca8fe930a164)
+Tidepool --[decided]--> Server-side rendering   (session:9c090f94-8f67-bd87-ad65-99e972887de8)
+Tidepool --[uses]--> Sharp   (session:d5382df2-dcd5-d106-ec03-66760e864829)
+Tidepool --[uses]--> Postgres   (session:9c090f94-8f67-bd87-ad65-99e972887de8)
+Tidepool --[uses]--> Vite   (session:9c090f94-8f67-bd87-ad65-99e972887de8)
+User --[works_on]--> Tidepool   (session:9c090f94-8f67-bd87-ad65-99e972887de8)
+Full-text index --[because]--> Slow album search   (session:3dc739a3-dae2-e3c0-f7b3-f27c444bf9b5)
+CPU spikes --[fixed_by]--> Resize on upload   (session:d5382df2-dcd5-d106-ec03-66760e864829)
+Resize on upload --[because]--> CPU spikes   (session:d5382df2-dcd5-d106-ec03-66760e864829)
+
+where:
+  User: The person using Claude Code.
+  Server-side rendering: Pages render on the server for fast first load.
+  Resize on upload: Thumbnails are made once, at upload, not per request.
+  Vite: Front-end build tool.
+  Resumable uploads: Uploads go in 5 MB chunks that can resume.
+  Full-text index: A Postgres full-text index on captions and tags.
+  Tidepool: Web app for sharing tide-pool photos.

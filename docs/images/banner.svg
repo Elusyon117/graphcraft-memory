@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 300" width="1200" height="300" role="img" aria-labelledby="t d">
+  <title id="t">graphcraft-memory</title>
+  <desc id="d">Knowledge-graph memory for Claude Code: a small graph of projects, decisions, problems and tools linked together.</desc>
+  <style>
+    .bg{fill:#f7f6f2}.ink{fill:#1f1e1b}.ink2{fill:#5f5e5a}.edge{stroke:#b4b2a9}.hi{stroke:#534ab7}.ring{stroke:#f7f6f2}.lbl{fill:#5f5e5a}
+    @media (prefers-color-scheme: dark){.bg{fill:#1b1b19}.ink{fill:#ecebe6}.ink2{fill:#b4b2a9}.edge{stroke:#5f5e5a}.hi{stroke:#afa9ec}.ring{stroke:#1b1b19}.lbl{fill:#b4b2a9}}
+    text{font-family:system-ui,-apple-system,"Segoe UI",Helvetica,Arial,sans-serif}
+  </style>
+  <rect class="bg" width="1200" height="300" rx="18"/>
+  <text class="ink" x="64" y="128" font-size="54" font-weight="700">graphcraft-memory</text>
+  <text class="ink2" x="66" y="172" font-size="22">Knowledge-graph memory for Claude Code</text>
+  <text class="ink2" x="66" y="214" font-size="16">Every prompt gets the facts linked to what you mention. No search, no model call, ~5 ms.</text>
+
+  <!-- a small graph: project, decisions, problems, tools, a preference -->
+  <g fill="none" stroke-width="2">
+    <path class="edge" d="M760 150 C820 150 820 92 880 92"/>
+    <path class="edge" d="M760 150 C820 150 820 208 880 208"/>
+    <path class="hi" stroke-width="3" d="M760 150 C820 150 820 150 880 150"/>
+    <path class="hi" stroke-width="3" d="M892 150 C950 150 950 150 1004 150"/>
+    <path class="edge" d="M892 92 C950 92 950 76 1004 76"/>
+    <path class="edge" d="M892 208 C950 208 950 226 1004 226"/>
+    <path class="edge" d="M1016 76 C1070 76 1070 112 1120 112"/>
+    <path class="edge" d="M1016 226 C1070 226 1070 188 1120 188"/>
+    <path class="edge" stroke-dasharray="3 5" d="M670 150 C700 150 710 150 748 150"/>
+  </g>
+  <g stroke-width="3">
+    <circle class="ring" cx="660" cy="150" r="11" fill="#378ADD"/>
+    <circle class="ring" cx="760" cy="150" r="15" fill="#1D9E75"/>
+    <circle class="ring" cx="880" cy="92" r="11" fill="#7F77DD"/>
+    <circle class="ring" cx="880" cy="150" r="13" fill="#7F77DD"/>
+    <circle class="ring" cx="880" cy="208" r="11" fill="#7F77DD"/>
+    <circle class="ring" cx="1004" cy="76" r="11" fill="#D85A30"/>
+    <circle class="ring" cx="1004" cy="150" r="13" fill="#D85A30"/>
+    <circle class="ring" cx="1004" cy="226" r="11" fill="#D85A30"/>
+    <circle class="ring" cx="1120" cy="112" r="10" fill="#888780"/>
+    <circle class="ring" cx="1120" cy="188" r="10" fill="#BA7517"/>
+  </g>
+  <path d="M998 150 l4 4 l8 -9" stroke="#fff" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  <g class="lbl" font-size="12" text-anchor="middle">
+    <text x="660" y="178">you</text>
+    <text x="760" y="184">project</text>
+    <text x="880" y="181">decision</text>
+    <text x="1004" y="181">problem</text>
+    <text x="1120" y="140">tool</text>
+    <text x="1120" y="216">concept</text>
+    <text x="946" y="141">because</text>
+  </g>
+</svg>
