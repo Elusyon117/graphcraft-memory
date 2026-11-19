@@ -75,7 +75,9 @@ names) under `origin = session:<id>`, so undo treats it as part of that session.
   `capture.py claim` moves it to `working/` (atomic, so two open sessions never extract the same file), `prepare`
   drops messages already captured for that session, skips fewer than 3 new user messages, strips system tags and
   redacts secrets, keeps the newest 24,000 characters, and builds the prompt (`graph/extract_prompt.md`) with the
-  vocabulary in force and the names already in memory, so the model reuses them. The mod makes one
+  vocabulary in force and up to 60 nodes already in memory, with their descriptions, so the model reuses them:
+  first what this session already saved (by `memory_remember` or an earlier capture, which the digest does not
+  show), then names said word for word, then nodes the conversation's words point at. The mod makes one
   `$.model.complete` call (`extractModel`, default `haiku`).
 - **Check and store:** `apply` reads the JSON in the reply; unknown types or predicates, self-links, and links whose
   ends are not the types the predicate's description names ("DECISION because PROBLEM, ...") are dropped and
@@ -173,5 +175,8 @@ already tried, before Claude replies, and it survives compaction because it is r
 - One thing saved under two types (a concept and a tool): a new name already in memory as another type reuses that
   node unless a fact needs the new type; `store.py merge` (run at session start) joins pairs already split, when
   every live fact still fits the vocabulary, keeping each fact's source.
+- One thing saved under two names ("Boost facts linking named things" and "Both-named facts first"): nothing
+  merges these. Capture lowers the odds by showing the model this session's nodes and word matches with their
+  descriptions; any that still slip through are dropped by hand in the pane.
 - Wrong extractions get repeated confidently (validation, origins, and the panel to fix them).
 - Stale facts (retire instead of delete; extraction can retire "X blocked_by Y" when Y is fixed).

@@ -46,7 +46,9 @@ Use ONLY these entity types:
 Use ONLY these predicates (source predicate target); an edge whose endpoint types are not listed is dropped:
 {predicates}
 
-Names already in memory that this conversation may mention; reuse them exactly when you mean the same thing:
+Things already in memory that this conversation may mean, with what each is. When you mean one of them, use its
+name exactly, even if the conversation words it differently ("Retry uploads twice" is "Two upload retries" if that is
+what it describes); make a new node only for something not in this list:
 {known}
 
 If a fact from earlier is now false (a problem got fixed, a decision was reversed), list it under "retire".

@@ -97,6 +97,32 @@ class CaptureTest(unittest.TestCase):
         prep = capture.prepare(self.job(conversation(3, [{"role": "user", "text": "new: Zone Kit froze"}]), sid="s2"))
         self.assertIn("Zone Kit (TOOL)", prep["system"])
 
+    def test_what_this_session_saved_is_offered_with_its_description(self):
+        # saved through memory_remember: the digest never shows it, and the conversation words it differently
+        with closing(store.connect()) as db:
+            o = store.add_origin(db, "session", "s1", PROJECT)
+            store.upsert(db, {"nodes": [{"name": "Campfires", "type": "PROJECT"},
+                                        {"name": "Both-named facts first", "type": "DECISION",
+                                         "description": "Boost recall of facts linking two named things."}],
+                              "edges": [{"source": "Campfires", "predicate": "decided",
+                                         "target": "Both-named facts first"}]}, o, capture.active_vocabulary())
+            db.commit()
+        prep = capture.prepare(self.job(conversation(3)))
+        self.assertIn("Both-named facts first (DECISION): Boost recall of facts linking two named things.", prep["system"])
+        other = capture.prepare(self.job(conversation(3), sid="s9"))  # another session that does not mention it
+        self.assertNotIn("Both-named facts first", other["system"])
+
+    def test_a_node_the_words_point_at_is_offered(self):
+        with closing(store.connect()) as db:
+            o = store.add_origin(db, "session", "old", PROJECT)
+            store.upsert(db, {"nodes": [{"name": "Linked anim layer", "type": "DECISION",
+                                         "description": "How the sit animation plays on the player."}],
+                              "edges": []}, o, capture.active_vocabulary())
+            db.commit()
+        msgs = [{"role": "user", "text": f"the player sit animation glitches again, take {i}"} for i in range(3)]
+        prep = capture.prepare(self.job(msgs))
+        self.assertIn("Linked anim layer (DECISION)", prep["system"])
+
     def test_long_conversation_keeps_its_end(self):
         msgs = conversation(3) + [{"role": "user", "text": "x" * 2000} for _ in range(30)]
         msgs.append({"role": "user", "text": "THE LAST WORD"})

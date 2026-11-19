@@ -30,6 +30,7 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import recall  # noqa: E402
 import store  # noqa: E402
+import terms  # noqa: E402
 
 PROMPT_FILE = Path(__file__).resolve().parent / "extract_prompt.md"
 MIN_USER_TURNS = 3       # fewer new user messages than this: not worth a model call
@@ -37,6 +38,8 @@ MAX_DIGEST_CHARS = 24000  # the newest part of the conversation is kept when it 
 MAX_MESSAGE_CHARS = 2500  # one long paste or reply is cut to its start
 MAX_TRIES = 3
 KNOWN_NAMES = 60
+KNOWN_FUZZY = 20    # nodes found by the conversation's words, not their names
+KNOWN_DESC = 120
 
 SECRET = re.compile(
     r"(sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|xox[abpr]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16}"
@@ -106,13 +109,24 @@ def active_vocabulary() -> dict:
     return store.load_vocabulary(sorted((data_dir() / "vocab").glob("*.json")))
 
 
-def known_names(db, text: str) -> list:
-    ids = list(recall._ids_for(db, recall.ngrams(text)))[:KNOWN_NAMES]
+def known_names(db, text: str, session: str = "") -> list:
+    """Nodes the conversation may mean, for the model to reuse instead of naming them again in other words: first
+    what this session already saved (by memory_remember or an earlier capture, which the digest does not show), then
+    names said word for word, then nodes the conversation's words point at. Each with its description, so a node
+    can be recognised by what it is, not only by its name."""
+    ids = [r[0] for r in db.execute(
+        "SELECT DISTINCT e.id FROM relations r JOIN origins o ON o.id=r.origin_id"
+        " JOIN entities e ON e.id IN (r.source_id, r.target_id)"
+        " WHERE o.kind='session' AND o.ref=? AND r.retired IS NULL ORDER BY r.created DESC", (session,))] if session else []
+    ids += sorted(recall._ids_for(db, recall.ngrams(text)))
+    ids += list(terms.fuzzy_seeds(db, text, limit=KNOWN_FUZZY))
+    ids = list(dict.fromkeys(ids))[:KNOWN_NAMES]
     if not ids:
         return []
     marks = ",".join("?" * len(ids))
-    return [f"{n} ({t})" for n, t in db.execute(
-        f"SELECT name, type FROM entities WHERE id IN ({marks}) ORDER BY name", ids)]  # noqa: S608
+    rows = {i: (n, t, d) for i, n, t, d in db.execute(
+        f"SELECT id, name, type, description FROM entities WHERE id IN ({marks})", ids)}  # noqa: S608
+    return [f"{n} ({t})" + (f": {d[:KNOWN_DESC]}" if d else "") for n, t, d in (rows[i] for i in ids if i in rows)]
 
 
 def project_name(path: str) -> str:
@@ -132,7 +146,7 @@ def _prepare(db, job: dict) -> dict:
         return {"skip": f"{users} new user message(s), fewer than {MIN_USER_TURNS}"}
     text = digest(msgs)
     vocab = active_vocabulary()
-    known = known_names(db, text)
+    known = known_names(db, text, job.get("sessionId", ""))
     system = (PROMPT_FILE.read_text(encoding="utf-8")
               .replace("{project}", project_name(job.get("project", "")))
               .replace("{types}", "\n".join(f"- {k}: {v}" for k, v in vocab["types"].items()))
