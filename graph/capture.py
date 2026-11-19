@@ -109,6 +109,14 @@ def active_vocabulary() -> dict:
     return store.load_vocabulary(sorted((data_dir() / "vocab").glob("*.json")))
 
 
+def learnable_vocabulary() -> dict:
+    """The vocabulary for saving facts: the types the user switched off (settings: skipTypes) are not offered to the
+    model, and upsert drops any that come back anyway."""
+    v = active_vocabulary()
+    skip = set(store.settings()["skipTypes"]) & set(v["types"])
+    return {**v, "skip": sorted(skip)}  # all types stay, so link checks read predicates the same way
+
+
 def known_names(db, text: str, session: str = "") -> list:
     """Nodes the conversation may mean, for the model to reuse instead of naming them again in other words: first
     what this session already saved (by memory_remember or an earlier capture, which the digest does not show), then
@@ -145,11 +153,11 @@ def _prepare(db, job: dict) -> dict:
     if users < MIN_USER_TURNS:
         return {"skip": f"{users} new user message(s), fewer than {MIN_USER_TURNS}"}
     text = digest(msgs)
-    vocab = active_vocabulary()
+    vocab = learnable_vocabulary()
     known = known_names(db, text, job.get("sessionId", ""))
     system = (PROMPT_FILE.read_text(encoding="utf-8")
               .replace("{project}", project_name(job.get("project", "")))
-              .replace("{types}", "\n".join(f"- {k}: {v}" for k, v in vocab["types"].items()))
+              .replace("{types}", "\n".join(f"- {k}: {v}" for k, v in vocab["types"].items() if k not in vocab["skip"]))
               .replace("{predicates}", "\n".join(f"- {k}: {v}" for k, v in vocab["predicates"].items()))
               .replace("{known}", "\n".join(f"- {k}" for k in known) or "(none yet)"))
     return {"system": system, "prompt": f"<conversation>\n{text}\n</conversation>", "new": len(msgs)}
@@ -209,7 +217,7 @@ def _apply(db, job: dict, batch: dict, file: str) -> dict:
     sid, project = job.get("sessionId", ""), job.get("project", "")
     msgs = new_messages(db, job)
     origin = store.add_origin(db, "session", sid, project)
-    report = store.upsert(db, batch, origin, active_vocabulary())
+    report = store.upsert(db, batch, origin, learnable_vocabulary())
     retired = sum(store.retire(db, r.get("source", ""), r.get("predicate", ""), r.get("target", ""))
                   for r in batch.get("retire", []) if isinstance(r, dict))
     if isinstance(batch.get("title"), str):  # named once, by the first capture; the user's own name always stays

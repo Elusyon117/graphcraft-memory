@@ -4,6 +4,7 @@ import os
 import re
 import sys
 import tempfile
+import time
 import unittest
 from contextlib import closing
 from pathlib import Path
@@ -71,6 +72,15 @@ class ViewTest(unittest.TestCase):
         self.assertNotIn("overrides", [e["p"] for e in data["edges"] if e["s"] == data["retired"][0]["s"]])
         kit = next(n for n in data["nodes"] if n["name"] == "Zone Kit")
         self.assertEqual(kit["origin"], "feeder:zonecraft:conflicts")
+
+    def test_the_map_opens_in_the_layout_from_the_settings(self):
+        self.assertEqual(embedded(self.build()[1])["layout"], "structured")
+        store.save_settings({"mapLayout": "free"})
+        time.sleep(0.01)
+        _, html = self.build()
+        self.assertEqual(embedded(html)["layout"], "free")
+        for needle in ('id="mini"', 'id="zIn"', 'id="bands"', "function layoutStruct"):
+            self.assertIn(needle, html)
 
     def test_page_has_the_timeline_tab(self):
         _, html = self.build()

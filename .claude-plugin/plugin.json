@@ -1,6 +1,6 @@
 {
   "name": "graphcraft-memory",
-  "version": "0.11.2",
+  "version": "0.12.0",
   "description": "Knowledge-graph memory for Claude Code: facts from every session are linked into one graph per machine, and the relevant part is handed to Claude before each prompt. Other mods (like zonecraft) can feed it.",
   "author": {
     "name": "Elusyon117",
@@ -37,6 +37,46 @@
       "title": "Learn during the conversation",
       "description": "Also read the conversation after every this many of your messages, so what is settled now is recalled in this session too (one small model call each time). 0: only when it ends or compacts.",
       "default": 8
+    },
+    "recallFacts": {
+      "type": "number",
+      "title": "Facts per prompt",
+      "description": "How many remembered facts Claude gets with each message (1 to 40). More gives fuller context and uses more of the context window.",
+      "default": 14
+    },
+    "recallDepth": {
+      "type": "number",
+      "title": "How far recall reaches",
+      "description": "How many links out from what your message names (1 to 3). 1: only facts about the things you named. 3: their wider surroundings too.",
+      "default": 2
+    },
+    "otherProjects": {
+      "type": "boolean",
+      "title": "Recall from other projects",
+      "description": "Let facts learned in other projects come up, ranked after this project's. Off: only this project's facts and global ones.",
+      "default": true
+    },
+    "skipTypes": {
+      "type": "string",
+      "title": "Kinds of things not to remember",
+      "description": "Comma-separated types that are neither learned nor recalled, e.g. PERSON, PREFERENCE. Types: PERSON, PROJECT, TOOL, FILE, CONCEPT, DECISION, PROBLEM, PREFERENCE (plus any your mods add). Facts already saved stay in the graph, hidden from recall.",
+      "default": ""
+    },
+    "warmRecall": {
+      "type": "boolean",
+      "title": "Keep recall warm",
+      "description": "Keep one small Python process running for the session so recall takes about 5 ms instead of about 150 ms. Off: Python starts fresh for each message.",
+      "default": true
+    },
+    "mapLayout": {
+      "type": "string",
+      "title": "Map opens in",
+      "description": "The layout /graph-view opens with. Structured: a column per kind, rows grouped by project. Free: a force-directed web.",
+      "options": [
+        "Structured",
+        "Free"
+      ],
+      "default": "Structured"
     }
   }
 }

@@ -117,6 +117,22 @@ A mod that wants to feed the graph ships `graphcraft/feeder.json` in its plugin 
   gives them again. Paths in `feeder.json` must stay inside the mod's folder; a broken adapter is logged, not fatal.
 - No feeder file: nothing happens. No graphcraft-memory installed: the mod ignores its own `graphcraft/` folder.
 
+## Settings (the user's tuning)
+
+The mod's settings (`.claude-plugin/plugin.json` `userConfig`) are written by the hook at session start to
+`settings.json` next to the graph (`store.py settings --set`), cleaned there (numbers clamped, unknown values back to
+their defaults). Python reads that one file everywhere, so recall (warm or not), capture, `memory_remember` and the map
+agree without flags threaded through each call; `serve.py` rereads it only when its mtime changes.
+
+- `recallFacts` (1-40), `recallDepth` (1-3): the prompt hook's budget and walk; the character budget grows with the
+  fact count. `memory_search` keeps its own larger limits.
+- `otherProjects`: off drops facts whose source is another project (global facts stay).
+- `skipTypes`: those types are not offered to the extraction model, upsert drops their nodes and any fact touching
+  them ("switched off in the settings"), and recall skips facts touching them. Facts already saved stay in the graph.
+  Link checks still read the full vocabulary, so switching a type off never loosens what a predicate may link.
+- `warmRecall`: off skips `serve.py`; every prompt runs `recall.py`.
+- `mapLayout`: which layout `/graph-view` opens in (the page remembers a later switch in the browser).
+
 ## Vocabulary
 
 **Core** (`vocabulary/core.json`, always present):

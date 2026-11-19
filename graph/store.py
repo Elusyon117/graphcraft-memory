@@ -7,6 +7,7 @@ r"""The graph store: one SQLite file per machine, upserts only.
     py -I store.py rename SESSION TITLE                  name a session (an id, its first characters, or "last")
     py -I store.py stats                                 counts
     py -I store.py merge                                 join nodes saved twice under different types
+    py -I store.py settings [--set JSON]                 the user's tuning (settings.json next to the graph)
 (Moving the graph to another PC: sync.py.)
 
 The database is ~/.claude/graphcraft-memory/graph.db (CLAUDE_CONFIG_DIR if set), or GRAPHCRAFT_DB when set (tests).
@@ -69,6 +70,66 @@ def db_path() -> Path:
     # desktop app and a terminal Claude Code would each see a different graph. ~/.claude is shared by every install.
     base = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(os.path.expanduser("~"), ".claude")
     return Path(base) / "graphcraft-memory" / "graph.db"
+
+
+# The user's tuning, from the mod's settings (the hook writes settings.json next to the graph at session start, so
+# recall, capture and the map read the same values). Missing or bad values fall back to these.
+SETTINGS = {"recallFacts": 14, "recallHops": 2, "otherProjects": True, "skipTypes": [], "mapLayout": "structured"}
+_settings_cache: list = [None, None]  # (path and mtime, values): serve.py rereads only when the file changed
+
+
+def settings_path() -> Path:
+    return db_path().parent / "settings.json"
+
+
+def settings() -> dict:
+    path = settings_path()
+    try:
+        key = (str(path), path.stat().st_mtime_ns)
+    except OSError:
+        return dict(SETTINGS)
+    if _settings_cache[0] != key:
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            raw = {}
+        _settings_cache[:] = [key, clean_settings(raw if isinstance(raw, dict) else {})]
+    return dict(_settings_cache[1])
+
+
+def clean_settings(raw: dict) -> dict:
+    out = dict(SETTINGS)
+    def num(k, lo, hi):
+        v = raw.get(k)
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            out[k] = max(lo, min(hi, int(round(v))))
+    num("recallFacts", 1, 40)
+    num("recallHops", 1, 3)
+    if isinstance(raw.get("otherProjects"), bool):
+        out["otherProjects"] = raw["otherProjects"]
+    if raw.get("mapLayout") in ("structured", "free"):
+        out["mapLayout"] = raw["mapLayout"]
+    skip = raw.get("skipTypes")
+    if isinstance(skip, str):
+        skip = re.split(r"[,;]+", skip)
+    if isinstance(skip, list):
+        out["skipTypes"] = sorted({str(t).strip().upper().replace(" ", "_") for t in skip if str(t).strip()})
+    return out
+
+
+def save_settings(raw: dict) -> dict:
+    """Write the cleaned settings; unchanged files are left alone, so serve.py's cache stays warm."""
+    out = clean_settings(raw)
+    path = settings_path()
+    text = json.dumps(out, indent=2, sort_keys=True)
+    try:
+        if path.read_text(encoding="utf-8") == text:
+            return out
+    except OSError:
+        pass
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    return out
 
 
 def normalise(name: str) -> str:
@@ -192,6 +253,7 @@ def upsert(db: sqlite3.Connection, batch: dict, origin_id: int, vocab: dict) -> 
     report = {"nodes": 0, "edges": 0, "aliases": 0, "dropped": [], "stored": []}  # stored: (s, p, t) ids
     local = {}  # normalised name -> id, for this batch
 
+    skip = set(vocab.get("skip", ()))  # types the user switched off: neither their nodes nor their facts are saved
     held = {}  # normalised name -> the node as given, while an existing node of another type stands in for it
 
     def put(n: dict) -> str:
@@ -212,6 +274,9 @@ def upsert(db: sqlite3.Connection, batch: dict, origin_id: int, vocab: dict) -> 
         name, type_ = (n.get("name") or "").strip(), n.get("type")
         if not name or type_ not in vocab["types"]:
             report["dropped"].append(f"node {name!r}: type {type_!r} not in vocabulary")
+            continue
+        if type_ in skip:
+            report["dropped"].append(f"node {name!r}: {type_} is switched off in the settings")
             continue
         # The same name already in memory as another type is the same thing, named again with a different guess at
         # its type: reuse it, so its facts are not split over two nodes. Only if a fact here needs this type is a
@@ -259,6 +324,10 @@ def upsert(db: sqlite3.Connection, batch: dict, origin_id: int, vocab: dict) -> 
                 local[k] = made
                 s, t = (made, t) if side == "source" else (s, made)
         st, tt = type_of(s), type_of(t)
+        if st in skip or tt in skip:
+            report["dropped"].append(f"edge {e.get('source')!r} {p!r} {e.get('target')!r}:"
+                                     f" {st if st in skip else tt} is switched off in the settings")
+            continue
         if not fits(s, t):
             report["dropped"].append(f"edge {e.get('source')!r} ({st}) {p!r} {e.get('target')!r} ({tt}):"
                                      f" {p} links {vocab['predicates'][p]!r}")
@@ -393,10 +462,16 @@ def main(argv=None) -> int:
     rn = sub.add_parser("rename")
     rn.add_argument("session")
     rn.add_argument("title", nargs="+")
+    st = sub.add_parser("settings")
+    st.add_argument("--set", default="", help="JSON object: the mod's settings, cleaned and saved")
     args = ap.parse_args(argv)
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
+    if args.cmd == "settings":  # no database needed
+        out = save_settings(json.loads(args.set)) if args.set else settings()
+        print(json.dumps(out))
+        return 0
     db = connect()
     if args.cmd == "load":
         batch = json.loads(Path(args.file).read_text(encoding="utf-8"))

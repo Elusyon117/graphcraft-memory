@@ -39,8 +39,8 @@ HUB = 25
 MAX_FACTS = 14
 MAX_CHARS = 1800
 PER_NODE = 40
-NEAR_COST = 1.5
-OTHER_PROJECT = 1.0
+NEAR_COST = 3  # a fact about what the prompt named beats context one link out, unless that context is weighty and it is trivial
+OTHER_PROJECT = 0.5
 # A fact linking two things the prompt named is what it asks about: it comes before any weightier neighbour.
 BOTH_NAMED = 5
 # How much a kind of link says. Reasons, choices, problems and preferences matter most; "part of" and
@@ -105,7 +105,9 @@ def walk(db, seeds: set, hops: int, later: dict | None = None) -> dict:
     frontier = set(seeds)
     for d in range(1, hops + 1):
         frontier |= {s for s in later if depth[s] == d - 1}
-        expand = [n for n in frontier if n in seeds or n in later or (_degree(db, n) <= HUB and _type(db, n) not in PASS_OVER)]
+        ask = [n for n in frontier if n not in seeds and n not in later]
+        info = _hub_info(db, ask)
+        expand = [n for n in frontier if n in seeds or n in later or (info.get(n, (0, ""))[0] <= HUB and info.get(n, (0, ""))[1] not in PASS_OVER)]
         if not expand:
             if any(dd >= d for dd in later.values()):
                 frontier = set()
@@ -132,6 +134,21 @@ def walk(db, seeds: set, hops: int, later: dict | None = None) -> dict:
     return depth
 
 
+def _hub_info(db, ids: list) -> dict:
+    """{id: (live links, type)} in two queries for the whole frontier, instead of two per node."""
+    out = {}
+    for i in range(0, len(ids), 400):
+        chunk = ids[i:i + 400]
+        marks = ",".join("?" * len(chunk))
+        types = dict(db.execute(f"SELECT id, type FROM entities WHERE id IN ({marks})", chunk))  # noqa: S608
+        deg = dict(db.execute(
+            f"SELECT n, COUNT(*) FROM (SELECT source_id AS n FROM relations WHERE retired IS NULL AND source_id IN ({marks})"  # noqa: S608
+            f" UNION ALL SELECT target_id FROM relations WHERE retired IS NULL AND target_id IN ({marks})) GROUP BY n",
+            chunk + chunk))
+        out.update({n: (deg.get(n, 0), types.get(n, "")) for n in chunk})
+    return out
+
+
 def _type(db, eid: str) -> str:
     row = db.execute("SELECT type FROM entities WHERE id=?", (eid,)).fetchone()
     return row[0] if row else ""
@@ -142,10 +159,17 @@ def _degree(db, eid: str) -> int:
                       (eid, eid)).fetchone()[0]
 
 
-def recall(prompt: str, cwd: str = "", hops: int = 2, db=None, max_facts: int = MAX_FACTS, max_chars: int = MAX_CHARS,
-           seeds: set | None = None, with_project: bool = True) -> dict:
-    """The prompt hook's recall; memory_search passes bigger limits and, when it found seeds its own way, those."""
+def recall(prompt: str, cwd: str = "", hops: int | None = None, db=None, max_facts: int | None = None,
+           max_chars: int | None = None, seeds: set | None = None, with_project: bool = True) -> dict:
+    """The prompt hook's recall; memory_search passes bigger limits and, when it found seeds its own way, those.
+    What is not given comes from the user's settings (store.settings): how many facts, how far, which types,
+    whether other projects' facts may come."""
     t0 = time.perf_counter()
+    cfg = store.settings()
+    hops = hops or cfg["recallHops"]
+    max_facts = max_facts or cfg["recallFacts"]
+    max_chars = max_chars or max(MAX_CHARS, 130 * max_facts)
+    skip, others = set(cfg["skipTypes"]), cfg["otherProjects"]
     empty = {"facts": 0, "ms": 0.0, "summary": "", "context": "", "triples": [], "matched": [], "more": 0}
     if db is None:
         db = store.connect(create=False)
@@ -194,7 +218,12 @@ def recall(prompt: str, cwd: str = "", hops: int = 2, db=None, max_facts: int = 
         return (-score, near, -row[8], row[0], row[1], row[2])
 
     triples, seen, used = [], set(), set()
-    for row in sorted(rows, key=rank):
+    def allowed(row):  # the user's settings: switched-off types, and other projects' facts when they said so
+        if row[9] in skip or row[10] in skip:
+            return False
+        return others or not (row[7] and here and os.path.normcase(os.path.abspath(row[7])) != here)
+
+    for row in sorted(filter(allowed, rows), key=rank):
         key = (row[3], row[1], row[4])
         if key in seen:
             continue
@@ -238,7 +267,7 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("prompt", nargs="?", default="")
     ap.add_argument("--cwd", default="")
-    ap.add_argument("--hops", type=int, default=2)
+    ap.add_argument("--hops", type=int, default=None)
     ap.add_argument("--stdin", action="store_true", help='read {"prompt", "cwd"} as JSON from stdin')
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args(argv)
@@ -249,7 +278,7 @@ def main(argv=None) -> int:
     if args.stdin:
         data = json.loads(sys.stdin.buffer.read().decode("utf-8-sig") or "{}")
         prompt, cwd = data.get("prompt", ""), data.get("cwd", "")
-    out = recall(prompt, cwd, args.hops)
+    out = recall(prompt, cwd, args.hops)  # None: the settings' depth
     out["db"] = str(store.db_path())  # so the hook's debug line says which graph was read
     out["prompt_chars"] = len(prompt)  # and how much prompt text actually arrived
     print(json.dumps(out) if args.json else (out["context"] or "(no memory matches)"))

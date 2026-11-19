@@ -411,6 +411,15 @@ export const register: Register = (on, options) => {
   const model = typeof options.extractModel === 'string' && options.extractModel ? options.extractModel : 'haiku'
   const isCapturing = options.capture !== false
   const every = typeof options.captureEvery === 'number' ? Math.max(0, Math.round(options.captureEvery)) : 8
+  const isWarm = options.warmRecall !== false
+  // The rest of the tuning is read by Python (graph/store.py settings), which cleans it; the hook only passes it on.
+  const tuning = JSON.stringify({
+    recallFacts: options.recallFacts,
+    recallHops: options.recallDepth,
+    otherProjects: options.otherProjects,
+    skipTypes: options.skipTypes,
+    mapLayout: typeof options.mapLayout === 'string' ? options.mapLayout.toLowerCase() : undefined,
+  })
   // Per session: how many of the person's messages had been queued for reading when it last happened.
   const queuedAt = new Map<string, number>()
 
@@ -423,10 +432,10 @@ export const register: Register = (on, options) => {
     // words, so a long paste is cut to stay under Windows' command-line limit.
     const prompt = e.text.slice(0, MAX_PROMPT_CHARS)
     const cwd = await $.session.cwd()
-    let out = await recallWarm($, prompt, cwd)
+    let out = isWarm ? await recallWarm($, prompt, cwd) : undefined
     const how = out ? 'warm' : 'cold'
     if (!out) {
-      startWarm($, py) // for the next prompt
+      if (isWarm) startWarm($, py) // for the next prompt
       const r = await $.process.run(
         [...py, '-I', `${slash($.plugin.root)}/graph/recall.py`, '--json', '--cwd', cwd, '--', prompt],
         { timeoutMs: RECALL_TIMEOUT_MS },
@@ -490,8 +499,10 @@ export const register: Register = (on, options) => {
     })
     const started = await next(e)
     const py = await findPython($)
-    if (py) startWarm($, py)
     void (async () => {
+      // The person's tuning first, so recall (warm or not), capture and the map all read it.
+      await runPy($, 'store.py', ['settings', '--set', tuning], CAPTURE_TIMEOUT_MS)
+      if (py && isWarm) startWarm($, py)
       await refreshView($)
       // memory_remember names the types and predicates in force (core plus feeders'), so it waits for Python.
       const vocab = await runPy($, 'tools.py', ['vocab'], CAPTURE_TIMEOUT_MS)

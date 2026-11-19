@@ -69,6 +69,7 @@ def build(out: str = "", project: str = "", open_it: bool = False) -> dict:
         with closing(db):
             data = export(db)
     data["startProject"] = project
+    data["layout"] = store.settings()["mapLayout"]  # the user's default: structured or free
     path = Path(out) if out else store.db_path().parent / "view" / "graph.html"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(render(data), encoding="utf-8")

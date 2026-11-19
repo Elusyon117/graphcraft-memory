@@ -334,3 +334,24 @@ test('every captureEvery messages, the new part of the conversation is read duri
   await turn()
   expect(writes.filter(w => /[\\/]pending[\\/]/.test(w)).length).toBe(queued) // not again until three more
 })
+
+test('the settings reach Python at session start, and warm recall can be switched off', {
+  options: { capture: false, warmRecall: false, recallFacts: 6, recallDepth: 1, otherProjects: false, skipTypes: 'PERSON, PREFERENCE', mapLayout: 'Free' },
+}, async ($, on) => {
+  const calls: string[][] = []
+  engine(on, calls)
+  on('process.spawn', async function* (_, e) {
+    calls.push(['spawn', ...e.argv])
+    return { code: 0, signal: null }
+  })
+  await $.session.start({ cwd: 'C:/mods/Campfires', surface: 'terminal', isInteractive: true })
+  await new Promise(done => setTimeout(done, 20))
+  const set = calls.find(c => c.join(' ').includes('store.py settings --set'))
+  expect(JSON.parse(set?.[set.length - 1] ?? '{}')).toEqual({
+    recallFacts: 6, recallHops: 1, otherProjects: false, skipTypes: 'PERSON, PREFERENCE', mapLayout: 'free',
+  })
+  expect(calls.some(c => c[0] === 'spawn')).toBe(false)
+  await $.prompt.submit({ text: 'why did Campfires crash?' })
+  expect(calls.some(c => c.join(' ').includes('recall.py'))).toBe(true)
+  expect(calls.some(c => c[0] === 'spawn')).toBe(false)
+})

@@ -55,7 +55,10 @@ Commands: `/graph-export` saves all memory to one file (in Downloads) and `/grap
 PC, so your gaming PC and laptop can share what Claude remembers (import keeps a copy of the graph first, and the
 same file imported twice changes nothing); `/graph-memory` shows what is remembered and recent captures; `/graph-memory-undo` takes the last session's
 facts back out (or `/graph-memory-undo <session id>`); `/graph-view` opens an offline map of the whole graph in your
-browser (structured or free layout, a "Why chains" filter, click a node for its facts), with a **Timeline** tab:
+browser, with a **Timeline** tab. **Structured** puts each kind of thing in its own column and each project in its own
+band (click a band to fold it); **Free** is a web you can drag apart. Find jumps to each match (Enter for the next),
+double-click centres on a node, the corner overview moves you anywhere, and keys work too (arrows, `+`/`-`, `0` to fit,
+`/` to find, `?` for the list). "Why chains" keeps only decisions and their reasons. The Timeline tab shows
 every session newest first, what it taught and what has been retired since, and "Show on map" to light just its facts.
 Each session is named for what happened in it (the extraction model writes the title); `/graph-rename <session id or
 last> <name>`, the pane's Rename button or a timeline card's ✎ gives it your own name, which later captures keep. The **Memory pane** opens beside
@@ -73,9 +76,21 @@ the advice is), so "it crashed at the campfire" brings them back. See `docs/DESI
 Claude also gets two tools: `memory_search` digs further than the automatic recall (by name, or by words when nothing
 is named exactly), and `memory_remember` saves a decision, fix or preference the moment it is settled, under the
 current session, so `/graph-memory-undo` takes it back out like any capture. Recall stays in one small process for
-the session (a few ms a prompt). Settings: `capture` (on/off), `captureEvery` (also learn after every this many of
-your messages, default 8; 0 for only at the end) and `extractModel`
-(`haiku`/`sonnet`).
+the session (a few ms a prompt).
+
+Settings (in the mod's settings; they apply from the next session):
+
+| Setting | Default | What it tunes |
+|---|---|---|
+| Facts per prompt (`recallFacts`) | 14 | How many facts ride along with each message (1 to 40). |
+| How far recall reaches (`recallDepth`) | 2 | 1: only facts about what you named. 3: their wider surroundings too. |
+| Recall from other projects (`otherProjects`) | on | Off: only this project's facts and global ones. |
+| Kinds of things not to remember (`skipTypes`) | none | e.g. `PERSON, PREFERENCE`: neither learned nor recalled (saved ones stay, hidden). |
+| Learn from conversations (`capture`) | on | Off: recall only. |
+| Learn during the conversation (`captureEvery`) | 8 | Also learn after every this many of your messages; 0 for only at the end. |
+| Extraction model (`extractModel`) | haiku | `sonnet` catches subtler facts and costs more. |
+| Keep recall warm (`warmRecall`) | on | Off: Python starts fresh for each message (about 150 ms instead of 5). |
+| Map opens in (`mapLayout`) | Structured | Or Free. |
 
 Needs Python 3 (standard library only).
 

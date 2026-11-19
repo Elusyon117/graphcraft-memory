@@ -78,7 +78,7 @@ def remember(file: str, session: str, project: str = "") -> dict:
             n.pop("scope", None)
     with closing(store.connect()) as db:
         origin = store.add_origin(db, "session", session, project)
-        report = store.upsert(db, batch, origin, capture.active_vocabulary())
+        report = store.upsert(db, batch, origin, capture.learnable_vocabulary())
         retired = sum(store.retire(db, r.get("source", ""), r.get("predicate", ""), r.get("target", ""))
                       for r in batch.get("retire", []) if isinstance(r, dict))
     capture._log({"event": "remembered", "sessionId": session, "project": project, "facts": report["edges"],
