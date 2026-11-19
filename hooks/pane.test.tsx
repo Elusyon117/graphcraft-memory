@@ -8,7 +8,7 @@ const LEARNED = { source: 'User', predicate: 'prefers', target: 'Short replies',
 const STATE = {
   project: 'Campfires',
   brief: 'Last time in Campfires: latest decision: Linked anim layer · 1 open problem',
-  learned: { sessionId: 's-1', at: 1, total: 1, facts: [LEARNED] },
+  learned: { sessionId: 's-1', at: 1, total: 1, facts: [LEARNED], title: 'Fix the sit-animation crash', titleIsAuto: false },
   problems: [{ name: 'Bedroll overrides AnimBP_Player', fixed: false, fixedBy: '' }],
 }
 const RECALL = {
@@ -63,6 +63,7 @@ function engine(on: Parameters<Parameters<typeof test>[1]>[1], calls: string[][]
       : argv.includes('tools.py vocab') ? VOCAB
       : argv.includes('tools.py search') ? { facts: 1, text: 'Memory facts linked to it: Campfires --[decided]--> Linked anim layer' }
       : argv.includes('tools.py remember') ? { facts: 1, nodes: 2, retired: 0, dropped: ["edge 'X' (TOOL) 'about' 'Y'"] }
+      : argv.includes('store.py rename') ? { renamed: 's-1-full-id', title: e.argv[e.argv.length - 1] }
       : argv.includes('pane.py state') ? STATE : argv.includes('pane.py forget') ? { retired: 1 } : { files: [] }
     return {
       value: {
@@ -158,4 +159,33 @@ test('memory_remember saves under this session and reports what was dropped', { 
   expect(text).toContain('Saved 1 fact')
   expect(text).toContain('Not saved')
   expect(calls.find(c => c.join(' ').includes('tools.py remember'))?.join(' ')).toContain('--session sess-1')
+})
+
+test('the pane names the last session, and Rename saves a new name', { options: { capture: false } }, async ($, on) => {
+  const calls: string[][] = []
+  engine(on, calls)
+  await $.session.start({ cwd: 'C:/mods/Campfires', surface: 'desktop', isInteractive: true })
+
+  for (const surface of ['terminal', 'desktop'] as const) {
+    calls.length = 0
+    const ui = await $.ui.mount({ ...PANE, surface })
+    expect((await ui.find({ type: 'Text', text: /Fix the sit-animation crash/ }))?.text).toBeTruthy()
+    await ui.press({ key: 'rename-start' })
+    await ui.input({ key: 'rename', text: 'Campfire sit fix' })
+    const ran = calls.find(c => c.join(' ').includes('store.py rename'))
+    expect(ran?.slice(-4)).toEqual(['rename', 's-1', '--', 'Campfire sit fix'])
+    expect(await ui.find({ key: 'rename' })).toBeFalsy() // the field closes after Enter
+    await ui.unmount()
+  }
+})
+
+test('/graph-rename passes the session and the whole name; usage without a name', { options: { capture: false } }, async ($, on) => {
+  const calls: string[][] = []
+  engine(on, calls)
+  await $.session.start({ cwd: 'C:/mods/Campfires', surface: 'terminal', isInteractive: true })
+  const out = await $.command.run({ command: 'graph-rename', args: 'last  Pixel memory bubble' } as never)
+  expect(out.text).toContain('"Pixel memory bubble"')
+  expect(calls.find(c => c.join(' ').includes('store.py rename'))?.slice(-3)).toEqual(['last', '--', 'Pixel memory bubble'])
+  const usage = await $.command.run({ command: 'graph-rename', args: 'last' } as never)
+  expect(usage.text).toContain('Usage')
 })

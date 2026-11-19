@@ -198,13 +198,16 @@ def _apply(db, job: dict, batch: dict, file: str) -> dict:
     report = store.upsert(db, batch, origin, active_vocabulary())
     retired = sum(store.retire(db, r.get("source", ""), r.get("predicate", ""), r.get("target", ""))
                   for r in batch.get("retire", []) if isinstance(r, dict))
+    if isinstance(batch.get("title"), str):  # named once, by the first capture; the user's own name always stays
+        store.set_title(db, origin, batch["title"], "model")
     now = time.time()
     db.executemany("INSERT OR IGNORE INTO captured(session_id, hash, at) VALUES (?,?,?)",
                    [(sid, m["hash"], now) for m in msgs])
     db.commit()
     Path(file).unlink(missing_ok=True)
     out = {"sessionId": sid, "project": project, "trigger": job.get("trigger"), "facts": report["edges"],
-           "nodes": report["nodes"], "retired": retired, "dropped": report["dropped"]}
+           "nodes": report["nodes"], "retired": retired, "dropped": report["dropped"],
+           "title": store.title_of(db, origin)[0]}
     _log({"event": "applied", **out})
     return out
 
@@ -303,8 +306,15 @@ def recent(n: int) -> dict:
     path = data_dir() / "capture.jsonl"
     if not path.exists():
         return {"captures": []}
-    rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
-    return {"captures": list(reversed(rows))[:n]}
+    rows = list(reversed([json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]))[:n]
+    db = store.connect(create=False)
+    if db is not None:  # each session by its name as it stands now (renamed since, or never titled)
+        with closing(db):
+            for r in rows:
+                found = store.find_session(db, r.get("sessionId") or "-") if r.get("sessionId") else None
+                if found:
+                    r["title"] = store.title_of(db, found[0])[0]
+    return {"captures": rows}
 
 
 def undo(which: str) -> dict:

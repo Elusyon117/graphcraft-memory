@@ -39,7 +39,9 @@ def learned(db) -> dict | None:
                  "SELECT es.name, r.predicate, et.name, r.source_id, r.target_id FROM relations r"
                  " JOIN entities es ON es.id=r.source_id JOIN entities et ON et.id=r.target_id"
                  " WHERE r.origin_id=? AND r.retired IS NULL ORDER BY r.created, es.name", (row[0],))]
-    return {"sessionId": row[1], "at": round(row[2]), "total": len(facts), "facts": facts[:MAX_LEARNED]}
+    title, auto = store.title_of(db, row[0])
+    return {"sessionId": row[1], "at": round(row[2]), "total": len(facts), "facts": facts[:MAX_LEARNED],
+            "title": title, "titleIsAuto": auto}
 
 
 def project_view(db, cwd: str) -> dict:

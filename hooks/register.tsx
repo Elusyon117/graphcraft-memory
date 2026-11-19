@@ -8,6 +8,7 @@ import type { Clawd, PaneFact, PaneView, Used } from '../types'
 // - turn.complete: keep a draft of the conversation; session.end marks it finished; session.compact queues it
 // - session.start: extract queued conversations in the background with a small model, then tell the user
 // - /graph-memory, /graph-memory-undo, /graph-view: see what was learned, take a session back out, open the map
+// - /graph-rename (and Rename in the pane): give a session your own name; a later capture never replaces it
 // - the Memory pane (/graph-pane): facts used for the prompt, facts learned last session, open problems;
 //   and a brief band above the prompt until the first message
 
@@ -30,6 +31,8 @@ const used = atom({ plugin: 'graphcraft-memory', key: 'used' } as const, null, {
 const view = atom({ plugin: 'graphcraft-memory', key: 'view' } as const, null, { shape: 'view-1' })
 const clawd = atom({ plugin: 'graphcraft-memory', key: 'clawd' } as const, null, { shape: 'clawd-2' })
 const briefShown = atom({ plugin: 'graphcraft-memory', key: 'briefShown' } as const, true, { shape: 'brief-1' })
+// True while the pane shows the field that renames the last session.
+const renaming = atom({ plugin: 'graphcraft-memory', key: 'renaming' } as const, false, { shape: 'renaming-1' })
 
 // Found once per load; undefined = not looked yet, null = no Python 3 on this machine.
 let python: readonly string[] | null | undefined
@@ -173,14 +176,16 @@ async function memoryReport($: Engine): Promise<string> {
   for (const c of captures) {
     const when = new Date(Number(c.at ?? 0) * 1000).toLocaleString()
     const sid = String(c.sessionId ?? '').slice(0, 8)
+    const name = typeof c.title === 'string' && c.title ? `  "${c.title}"` : ''
     if (c.event === 'applied' || c.event === 'remembered')
       lines.push(
         `  ${when}  +${plural(Number(c.facts ?? 0), 'fact')}${c.event === 'remembered' ? ' remembered' : ''}` +
-          `  session ${sid}  ${String(c.project ?? '')}`,
+          `  session ${sid}${name}  ${String(c.project ?? '')}`,
       )
-    else lines.push(`  ${when}  ${String(c.event)}  session ${sid}  ${String(c.reason ?? '')}`)
+    else lines.push(`  ${when}  ${String(c.event)}  session ${sid}${name}  ${String(c.reason ?? '')}`)
   }
   lines.push('', 'Take a session back out with /graph-memory-undo (the last one) or /graph-memory-undo <session id>.')
+  lines.push('Name a session with /graph-rename <session id or last> <name>.')
   return lines.join('\n')
 }
 
@@ -264,6 +269,15 @@ async function refreshView($: Engine): Promise<void> {
   await update($, view, () => next)
 }
 
+/** Names a session ("last", an id or its first characters) through store.py; the reply line for the person. */
+async function renameSession($: Engine, which: string, title: string): Promise<string> {
+  const out = await runPy($, 'store.py', ['rename', which, '--', title], CAPTURE_TIMEOUT_MS)
+  if (!out || typeof out.renamed !== 'string')
+    return `Not renamed (${String(out?.reason ?? out?.error ?? 'memory could not be reached')}).`
+  await refreshView($)
+  return `Session ${out.renamed.slice(0, 8)} is now "${String(out.title)}".`
+}
+
 async function forgetFact($: Engine, f: PaneFact): Promise<void> {
   await runPy($, 'pane.py', ['forget', f.source_id, f.predicate, f.target_id], CAPTURE_TIMEOUT_MS)
   const k = factKey(f)
@@ -322,6 +336,10 @@ export const register: Register = (on, options) => {
       description: 'graphcraft-memory: open the memory map in your browser (optionally: a project name)',
     })
     await $.command.register({ name: 'graph-pane', description: 'graphcraft-memory: open the Memory pane' })
+    await $.command.register({
+      name: 'graph-rename',
+      description: 'graphcraft-memory: name a session: /graph-rename <session id or last> <name>',
+    })
     await $.tool.register({
       name: 'memory_search',
       description:
@@ -427,6 +445,7 @@ export const register: Register = (on, options) => {
       const v = await read($, view)
       const pet = await read($, clawd)
       const learned = v?.learned
+      const isRenaming = await read($, renaming)
       // Desktop draws each section as a card; the terminal has few rows, so there sections are plain.
       const isDesktop = 'Svg' in el
       const card = isDesktop ? ({ borderStyle: 'round', borderColor: 'subtle', paddingX: 'md', paddingY: 'sm' } as const) : {}
@@ -519,6 +538,32 @@ export const register: Register = (on, options) => {
               'Learned last session',
               plural(learned.total, 'fact'),
               <Box flexDirection="column" rowGap="sm">
+                {isRenaming ? (
+                  <Box flexDirection="row" columnGap="sm" alignItems="center">
+                    <el.Input
+                      key="rename"
+                      label="Name"
+                      value={learned.title}
+                      placeholder="What this session was about"
+                      submitLabel="rename"
+                      autoFocus
+                      onSubmit={value =>
+                        void (async () => {
+                          if (value.trim()) $.ui.toast(`memory: ${await renameSession($, learned.sessionId, value.trim())}`)
+                          await update($, renaming, () => false)
+                        })()
+                      }
+                    />
+                    <Button key="rename-cancel" label="Cancel" variant="secondary" onPress={() => void update($, renaming, () => false)} />
+                  </Box>
+                ) : (
+                  <Box flexDirection="row" justifyContent="space-between" alignItems="center" columnGap="md">
+                    <Text wrap="wrap" weight="medium" dimColor={learned.titleIsAuto || !learned.title}>
+                      {learned.title || `Session ${learned.sessionId.slice(0, 8)}`}
+                    </Text>
+                    <Button key="rename-start" label="Rename" variant="secondary" onPress={() => void update($, renaming, () => true)} />
+                  </Box>
+                )}
                 {learned.facts.length === 0 && note('All reviewed.')}
                 {learned.facts.slice(0, SHOW_LEARNED).map(f =>
                   row(
@@ -579,6 +624,12 @@ export const register: Register = (on, options) => {
   })
 
   on('command.run', { command: 'graph-memory' }, async $ => ({ text: await memoryReport($) }))
+
+  on('command.run', { command: 'graph-rename' }, async ($, e) => {
+    const m = /^(\S+)\s+([\s\S]+)$/.exec(e.args.trim())
+    if (!m) return { text: 'Usage: /graph-rename <session id, its first characters, or last> <name>' }
+    return { text: await renameSession($, m[1], m[2].trim()) }
+  })
 
   on('command.run', { command: 'graph-view' }, async ($, e) => {
     const args = ['build', '--open']

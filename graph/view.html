@@ -43,6 +43,9 @@ code{font-family:ui-monospace,Consolas,monospace;font-size:12px}
 .card::before{content:"";position:absolute;left:-21px;top:15px;width:10px;height:10px;border-radius:50%;background:var(--k,var(--accent));border:2px solid var(--bg)}
 .card .top{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
 .card .who{font-weight:600}
+.card .who.auto{font-weight:500;color:var(--text2)}
+.card .pen{border:0;padding:0 4px;color:var(--text2);font-size:12px}
+.card .pen:hover{color:var(--accent)}
 .card .n{margin-left:auto;font-size:12px;color:var(--text2)}
 .card .new{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
 .card .new span{font-size:12px;color:var(--text2);display:inline-flex;align-items:center;gap:5px;background:var(--lane);border-radius:999px;padding:2px 9px}
@@ -308,7 +311,14 @@ function side() {
 
 // ---- the timeline: every source newest first, by day; its facts, and the ones retired since
 const KIND_COLOR = {session: 'var(--accent)', feeder: '#1D9E75', file: '#888780'};
-function sourceName(x) { return x.kind === 'session' ? 'Session ' + short(x.ref) : x.kind + ' ' + x.ref; }
+function sourceName(x) { return x.title || (x.kind === 'session' ? 'Session ' + short(x.ref) : x.kind + ' ' + x.ref); }
+// The page is a static file and cannot write to the graph: ✎ copies the command that renames the session.
+function renameButton(x) {
+  const b = document.createElement('button'); b.className = 'pen'; b.textContent = '✎'; b.title = 'Rename: copies a /graph-rename command to paste in Claude Code';
+  b.onclick = () => { const cmd = '/graph-rename ' + x.ref + ' ' + (x.titleIsAuto ? '' : x.title || '');
+    const done = () => { b.textContent = 'copied: paste in Claude Code, then edit the name'; setTimeout(() => { b.textContent = '✎'; }, 2500); };
+    (navigator.clipboard ? navigator.clipboard.writeText(cmd) : Promise.reject()).then(done, () => prompt('Copy this and paste it in Claude Code:', cmd)); };
+  return b; }
 function drawTimeline() {
   const box = $('timeline'); box.innerHTML = '';
   const q = $('q').value.trim().toLowerCase();
@@ -331,12 +341,14 @@ function drawTimeline() {
       rail = document.createElement('div'); rail.className = 'rail'; box.appendChild(rail); }
     const c = document.createElement('div'); c.className = 'card'; c.style.setProperty('--k', KIND_COLOR[x.kind] || 'var(--accent)');
     const top = document.createElement('div'); top.className = 'top';
-    const who = document.createElement('span'); who.className = 'who'; who.textContent = sourceName(x);
+    const who = document.createElement('span'); who.className = 'who' + (x.titleIsAuto ? ' auto' : ''); who.textContent = sourceName(x);
+    if (x.title) who.title = (x.titleIsAuto ? 'Named from its decisions and problems. ' : '') + (x.kind === 'session' ? 'Session ' + x.ref : x.ref);
     const t = document.createElement('span'); t.className = 'muted';
     t.textContent = new Date(x.at * 1000).toLocaleTimeString(undefined, {hour: '2-digit', minute: '2-digit'}) + (x.project ? ' · ' + base(x.project) : '');
     const n = document.createElement('span'); n.className = 'n';
     n.textContent = '+' + x.facts + (x.facts === 1 ? ' fact' : ' facts') + (x.retired ? ' · ' + x.retired + ' retired since' : '');
-    top.append(who, t, n); c.appendChild(top);
+    if (x.kind === 'session' && x.title) t.textContent += ' · ' + short(x.ref);
+    top.append(who); if (x.kind === 'session') top.append(renameButton(x)); top.append(t, n); c.appendChild(top);
     const fresh = DATA.nodes.filter(m => m.origin === keyOf(x) && live.has(m.id));  // nodes still in some live fact
     if (fresh.length) { const nw = document.createElement('div'); nw.className = 'new';
       fresh.slice(0, 10).forEach(m => { const s = document.createElement('span'); const dt = document.createElement('i'); dt.className = 'dot'; dt.style.background = colorOf(m.type);

@@ -136,6 +136,16 @@ class CaptureTest(unittest.TestCase):
         self.assertIn("a plan is not a dependency", system)
         self.assertIn("DECISION because PROBLEM, CONCEPT or PREFERENCE", system)
 
+    def test_first_capture_names_the_session_and_a_users_name_stays(self):
+        titled = lambda t: REPLY.replace('{"nodes": [', '{"title": "%s", "nodes": [' % t, 1)
+        self.assertEqual(self.run_job(conversation(3), text=titled("Campfire sit animation"))["title"],
+                         "Campfire sit animation")
+        with closing(store.connect()) as db:
+            store.set_title(db, store.find_session(db, "s1")[0], "My own name", "user")
+        out = self.run_job(conversation(6), text=titled("Something else"))  # a later capture of the same session
+        self.assertEqual(out["title"], "My own name")
+        self.assertEqual(capture.recent(5)["captures"][0]["title"], "My own name")
+
     def test_apply_cleans_up_queue_and_reply(self):
         file = capture.claim(self.job(conversation(3)))["claimed"]
         reply = self.reply()

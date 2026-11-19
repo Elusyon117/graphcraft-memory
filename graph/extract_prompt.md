@@ -51,10 +51,14 @@ Names already in memory that this conversation may mention; reuse them exactly w
 
 If a fact from earlier is now false (a problem got fixed, a decision was reversed), list it under "retire".
 
+Give the conversation a title: 3 to 8 words naming what was done or decided, like a commit subject
+("Pixel memory bubble for Clawd", "Fix the sit-animation crash"); not "Conversation about ...", no date, no quotes.
+
 Answer with one JSON object and nothing else:
-{"nodes": [{"name": "...", "type": "...", "description": "...", "scope": "global"}],
+{"title": "...",
+ "nodes": [{"name": "...", "type": "...", "description": "...", "scope": "global"}],
  "edges": [{"source": "...", "predicate": "...", "target": "..."}],
  "aliases": [{"entity": "...", "alias": "..."}],
  "retire": [{"source": "...", "predicate": "...", "target": "..."}]}
 
-At most 25 edges; fewer, sharper facts beat many vague ones. If nothing is worth keeping, answer {"nodes": [], "edges": []}.
+At most 25 edges; fewer, sharper facts beat many vague ones. If nothing is worth keeping, answer {"title": "...", "nodes": [], "edges": []}.

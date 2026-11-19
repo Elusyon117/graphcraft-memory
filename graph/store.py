@@ -4,6 +4,7 @@ r"""The graph store: one SQLite file per machine, upserts only.
     py -I store.py load FILE.json --kind file --ref R [--project DIR] [--vocab EXTRA.json ...]
                                                          upsert a {nodes, edges, aliases} batch
     py -I store.py forget-origin ID                      remove everything one origin added
+    py -I store.py rename SESSION TITLE                  name a session (an id, its first characters, or "last")
     py -I store.py stats                                 counts
 
 The database is ~/.claude/graphcraft-memory/graph.db (CLAUDE_CONFIG_DIR if set), or GRAPHCRAFT_DB when set (tests).
@@ -105,7 +106,56 @@ def connect(path: Path | None = None, create: bool = True) -> sqlite3.Connection
         path.parent.mkdir(parents=True, exist_ok=True)
     db = sqlite3.connect(path)
     db.executescript(SCHEMA)
+    _migrate(db)
     return db
+
+
+def _migrate(db: sqlite3.Connection) -> None:
+    """Columns added after a graph was first made; each one additive, with a default, so old graphs just gain it."""
+    have = {r[1] for r in db.execute("PRAGMA table_info(origins)")}
+    if "title" not in have:  # what the source was about: the extraction model's title, or the user's own name
+        db.execute("ALTER TABLE origins ADD COLUMN title TEXT NOT NULL DEFAULT ''")
+    if "titled_by" not in have:  # '' (none yet), 'model' or 'user'; a user's name is never replaced
+        db.execute("ALTER TABLE origins ADD COLUMN titled_by TEXT NOT NULL DEFAULT ''")
+    db.commit()
+
+
+TITLE_MAX = 80
+
+
+def set_title(db: sqlite3.Connection, origin_id: int, title: str, by: str) -> bool:
+    """Name a source. The model names it once (the first capture of a session sees how it began); the user can rename
+    it any time, and a later capture never replaces the user's name. Returns whether the name changed."""
+    title = " ".join((title or "").split())[:TITLE_MAX]
+    if not title:
+        return False
+    cur = db.execute("UPDATE origins SET title=?, titled_by=? WHERE id=? AND (? = 'user' OR titled_by = '')",
+                     (title, by, origin_id, by))
+    db.commit()
+    return cur.rowcount > 0
+
+
+def title_of(db: sqlite3.Connection, origin_id: int) -> tuple:
+    """(title, is_auto). With no title stored, a name made from the decisions and problems the source introduced
+    (else any node it introduced), so older sessions read as something too."""
+    row = db.execute("SELECT title FROM origins WHERE id=?", (origin_id,)).fetchone()
+    if row and row[0]:
+        return row[0], False
+    names = [r[0] for r in db.execute(
+        "SELECT e.name FROM entities e WHERE e.origin_id=? AND EXISTS (SELECT 1 FROM relations r WHERE r.retired IS NULL"
+        " AND (r.source_id=e.id OR r.target_id=e.id)) ORDER BY CASE e.type WHEN 'DECISION' THEN 0 WHEN 'PROBLEM' THEN 1"
+        " WHEN 'PROJECT' THEN 9 WHEN 'PERSON' THEN 9 ELSE 2 END, e.created LIMIT 2", (origin_id,))]
+    return (" · ".join(names), True) if names else ("", True)
+
+
+def find_session(db: sqlite3.Connection, which: str) -> tuple | None:
+    """(origin id, session id) for "last", a whole session id, or its first characters (unambiguous)."""
+    if which in ("", "last"):
+        return db.execute("SELECT id, ref FROM origins WHERE kind='session' ORDER BY at DESC, id DESC LIMIT 1").fetchone()
+    rows = db.execute("SELECT id, ref FROM origins WHERE kind='session' AND ref LIKE ?",
+                      (which.replace("%", "").replace("_", "") + "%",)).fetchall()  # ids have no % or _
+    exact = [r for r in rows if r[1] == which]
+    return exact[0] if exact else rows[0] if len(rows) == 1 else None
 
 
 def add_origin(db: sqlite3.Connection, kind: str, ref: str, project: str = "") -> int:
@@ -240,7 +290,12 @@ def main(argv=None) -> int:
     ld.add_argument("--vocab", action="append", default=[])
     fo = sub.add_parser("forget-origin")
     fo.add_argument("id", type=int)
+    rn = sub.add_parser("rename")
+    rn.add_argument("session")
+    rn.add_argument("title", nargs="+")
     args = ap.parse_args(argv)
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
     db = connect()
     if args.cmd == "load":
@@ -250,6 +305,13 @@ def main(argv=None) -> int:
         out["origin"] = oid
     elif args.cmd == "forget-origin":
         out = forget_origin(db, args.id)
+    elif args.cmd == "rename":
+        found = find_session(db, args.session)
+        if not found:
+            out = {"renamed": None, "reason": f"no single captured session matches {args.session!r}"}
+        else:
+            set_title(db, found[0], " ".join(args.title), "user")
+            out = {"renamed": found[1], "title": title_of(db, found[0])[0]}
     else:
         out = stats(db)
         out["path"] = str(db_path())

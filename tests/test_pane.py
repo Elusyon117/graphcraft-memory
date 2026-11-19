@@ -50,6 +50,12 @@ class PaneTest(unittest.TestCase):
         self.assertEqual(out["total"], 2)
         self.assertEqual({(f["source"], f["target"]) for f in out["facts"]},
                          {("User", "Short replies"), ("Campfires", "Avoid AnimBP override")})
+        self.assertTrue(out["titleIsAuto"])  # never named: a name made from what it introduced
+        self.assertIn("Avoid AnimBP override", out["title"])
+        with closing(store.connect()) as db:
+            store.set_title(db, store.find_session(db, "s-2")[0], "Bedroll clash", "user")
+        out = pane.state(CWD)["learned"]
+        self.assertEqual((out["title"], out["titleIsAuto"]), ("Bedroll clash", False))
 
     def test_problems_open_first_and_fixed_by(self):
         problems = pane.state(CWD)["problems"]

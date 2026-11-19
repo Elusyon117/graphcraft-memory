@@ -53,7 +53,9 @@ Nothing to run once installed:
 Commands: `/graph-memory` shows what is remembered and recent captures; `/graph-memory-undo` takes the last session's
 facts back out (or `/graph-memory-undo <session id>`); `/graph-view` opens an offline map of the whole graph in your
 browser (structured or free layout, a "Why chains" filter, click a node for its facts), with a **Timeline** tab:
-every session newest first, what it taught and what has been retired since, and "Show on map" to light just its facts. The **Memory pane** opens beside
+every session newest first, what it taught and what has been retired since, and "Show on map" to light just its facts.
+Each session is named for what happened in it (the extraction model writes the title); `/graph-rename <session id or
+last> <name>`, the pane's Rename button or a timeline card's ✎ gives it your own name, which later captures keep. The **Memory pane** opens beside
 the chat: the facts used for your last prompt (Forget), what the last session taught it (Keep, Drop, Undo session) and
 this project's problems; close it and `/graph-pane` brings it back. Clawd sits in the corner with a memory bubble: when
 facts were recalled, a little graph builds itself in it as recall walks the links. With the clawd-pet mod installed,

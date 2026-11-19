@@ -184,6 +184,64 @@ class GraphTest(unittest.TestCase):
         self.assertGreater(out["facts"], 0)
         self.assertLess(ms, 50, f"recall took {ms:.1f} ms")
 
+    # --- session names ---
+
+    def session(self, ref):
+        return store.add_origin(self.db, "session", ref)
+
+    def test_model_names_once_and_the_users_name_always_stays(self):
+        oid = self.session("aaaa1111-x")
+        self.assertTrue(store.set_title(self.db, oid, "  Fix the   sit crash ", "model"))
+        self.assertEqual(store.title_of(self.db, oid), ("Fix the sit crash", False))
+        self.assertFalse(store.set_title(self.db, oid, "Something later", "model"))  # a later capture
+        self.assertTrue(store.set_title(self.db, oid, "My name", "user"))
+        self.assertFalse(store.set_title(self.db, oid, "Model again", "model"))
+        self.assertTrue(store.set_title(self.db, oid, "My second name", "user"))
+        self.assertEqual(store.title_of(self.db, oid)[0], "My second name")
+        self.assertFalse(store.set_title(self.db, oid, "   ", "user"))  # blank never erases a name
+
+    def test_untitled_source_is_named_from_what_it_introduced(self):
+        title, auto = store.title_of(self.db, self.origin)
+        self.assertTrue(auto)
+        self.assertTrue(title)
+        self.assertEqual(store.title_of(self.db, self.session("empty")), ("", True))
+
+    def test_find_session_by_last_whole_id_or_unique_prefix(self):
+        a = self.session("abc123-one")
+        self.db.execute("UPDATE origins SET at = at + 10 WHERE id=?", (a,))
+        b = self.session("abd456-two")
+        self.assertEqual(store.find_session(self.db, "last"), (a, "abc123-one"))
+        self.assertEqual(store.find_session(self.db, "abd"), (b, "abd456-two"))
+        self.assertIsNone(store.find_session(self.db, "ab"))  # ambiguous
+        self.assertIsNone(store.find_session(self.db, "zzz"))
+        self.assertIsNone(store.find_session(self.db, "%"))  # not a wildcard
+        self.assertEqual(store.find_session(self.db, "abc123-one"), (a, "abc123-one"))
+
+    def test_old_graph_gains_the_title_columns(self):
+        self.db.close()
+        old = Path(self.tmp.name) / "old.db"
+        import sqlite3
+        raw = sqlite3.connect(old)
+        raw.execute("CREATE TABLE origins (id INTEGER PRIMARY KEY, kind TEXT NOT NULL, ref TEXT NOT NULL,"
+                    " project TEXT NOT NULL DEFAULT '', at REAL NOT NULL, UNIQUE(kind, ref))")
+        raw.execute("INSERT INTO origins(kind, ref, at) VALUES ('session', 'old-1', 1)")
+        raw.commit(); raw.close()
+        self.db = store.connect(old)
+        self.assertEqual(store.title_of(self.db, 1), ("", True))
+        self.assertTrue(store.set_title(self.db, 1, "Named later", "user"))
+
+    def test_cli_rename_takes_a_name_that_starts_with_a_dash(self):
+        self.session("cli-session-1")
+        self.db.commit()
+        env = {**os.environ, "GRAPHCRAFT_DB": str(self.path)}
+        r = subprocess.run([sys.executable, "-I", str(ROOT / "graph" / "store.py"), "rename", "cli", "--", "-Sit fix", "v2"],
+                           capture_output=True, env=env, timeout=30)
+        self.assertEqual(r.returncode, 0, r.stderr.decode())
+        self.assertEqual(json.loads(r.stdout), {"renamed": "cli-session-1", "title": "-Sit fix v2"})
+        r = subprocess.run([sys.executable, "-I", str(ROOT / "graph" / "store.py"), "rename", "nope", "--", "x"],
+                           capture_output=True, env=env, timeout=30)
+        self.assertIsNone(json.loads(r.stdout)["renamed"])
+
     # --- the hook's command line ---
 
     def test_cli_stdin_json(self):

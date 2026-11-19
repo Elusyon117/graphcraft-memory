@@ -39,9 +39,10 @@ def export(db) -> dict:
     projects = sorted({e["project"] for e in edges if e["project"]})
     # For the timeline: every source in the order it first wrote, and the facts retired since (kept apart from
     # "edges", so the map never draws them).
-    sources = [{"kind": k, "ref": r, "project": p, "at": round(at), "facts": n, "retired": m}
-               for k, r, p, at, n, m in db.execute(
-                   "SELECT o.kind, o.ref, o.project, o.at,"
+    sources = [{"kind": k, "ref": r, "project": p, "at": round(at), "facts": n, "retired": m,
+                "title": store.title_of(db, oid)[0], "titleIsAuto": store.title_of(db, oid)[1]}
+               for oid, k, r, p, at, n, m in db.execute(
+                   "SELECT o.id, o.kind, o.ref, o.project, o.at,"
                    " (SELECT COUNT(*) FROM relations r WHERE r.origin_id = o.id AND r.retired IS NULL),"
                    " (SELECT COUNT(*) FROM relations r WHERE r.origin_id = o.id AND r.retired IS NOT NULL)"
                    " FROM origins o ORDER BY o.at")]

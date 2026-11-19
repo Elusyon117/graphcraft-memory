@@ -63,6 +63,7 @@ class ViewTest(unittest.TestCase):
         sources = {(s["kind"], s["ref"]): s for s in data["sources"]}
         self.assertEqual((sources[("session", "s-1")]["facts"], sources[("session", "s-1")]["retired"]), (4, 1))
         self.assertEqual(sources[("feeder", "zonecraft:conflicts")]["facts"], 1)
+        self.assertTrue(all("title" in s and "titleIsAuto" in s for s in data["sources"]))
         self.assertEqual([s["at"] for s in data["sources"]], sorted(s["at"] for s in data["sources"]))
         self.assertEqual(len(data["retired"]), 1)
         self.assertEqual(data["retired"][0]["p"], "overrides")

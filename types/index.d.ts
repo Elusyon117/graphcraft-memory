@@ -10,7 +10,7 @@ export type Used = { matched: string[]; more: number; facts: PaneFact[] }
 export type PaneView = {
   project: string
   brief: string
-  learned: { sessionId: string; at: number; total: number; facts: PaneFact[] } | null
+  learned: { sessionId: string; at: number; total: number; facts: PaneFact[]; title: string; titleIsAuto: boolean } | null
   problems: { name: string; fixed: boolean; fixedBy: string }[]
 }
 
@@ -25,6 +25,7 @@ declare module 'claude-code' {
       used: Shaped<Used | null>
       view: Shaped<PaneView | null>
       briefShown: Shaped<boolean>
+      renaming: Shaped<boolean>
     }
   }
 }
