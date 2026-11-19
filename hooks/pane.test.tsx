@@ -219,11 +219,11 @@ test('Fix offers the allowed links and saves the one picked', { options: { captu
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
   await ui.press({ key: 'fix:u:a|decided|b' })
   expect(calls.some(c => c.join(' ').includes('pane.py links a b'))).toBe(true)
-  await ui.select({ key: 'fix-link', value: 'avoids' } as never)
+  await ui.select({ key: 'fix-link:u', value: 'avoids' } as never)
   const ran = calls.find(c => c.join(' ').includes('pane.py relink'))?.join(' ')
   expect(ran).toContain('relink a decided b avoids --session sess-1')
   expect((await ui.find({ type: 'Text', text: /Linked anim layer/ }))?.text).toContain('avoids')
-  expect(await ui.find({ key: 'fix-link' })).toBeFalsy()
+  expect(await ui.find({ key: 'fix-link:u' })).toBeFalsy()
   await ui.unmount()
 })
 
@@ -234,9 +234,25 @@ test('Fix can hand a correction to Claude as a message', { options: { capture: f
   await $.prompt.submit({ text: 'why did Campfires crash?' })
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
   await ui.press({ key: 'fix:u:a|decided|b' })
-  await ui.input({ key: 'fix-tell', text: 'We dropped the linked layer in build 5.' })
+  await ui.input({ key: 'fix-tell:u', text: 'We dropped the linked layer in build 5.' })
   const sent = calls.filter(c => c[0] === 'prompt').map(c => c[1]).pop() ?? ''
   expect(sent).toContain('"Campfires decided Linked anim layer" is wrong. We dropped the linked layer in build 5.')
   expect(sent).toContain('memory_remember')
   await ui.unmount()
+})
+
+test('Fix on a fact that is both recalled and searched draws one box, and the pane still draws', { options: { capture: false } }, async ($, on) => {
+  const calls: string[][] = []
+  engine(on, calls)
+  await $.session.start({ cwd: 'C:/mods/Campfires', surface: 'desktop', isInteractive: true })
+  await $.prompt.submit({ text: 'why did Campfires crash?' })
+  for (const where of ['s', 'u'] as const) {
+    const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+    await ui.input({ key: 'search', text: 'anim layer' }) // FACT is now in both lists
+    await ui.press({ key: `fix:${where}:a|decided|b` })
+    expect(await ui.find({ key: `fix-link:${where}` })).toBeTruthy()
+    expect(await ui.find({ key: `fix-link:${where === 's' ? 'u' : 's'}` })).toBeFalsy()
+    expect((await ui.find({ type: 'Text', text: /Used for this prompt/ }))?.text).toBeTruthy()
+    await ui.unmount()
+  }
 })

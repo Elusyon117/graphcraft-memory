@@ -306,10 +306,12 @@ async function searchMemory($: Engine, query: string): Promise<void> {
   await update($, searched, () => ({ query: query.trim(), facts: facts.slice(0, SHOW_SEARCH), more: Math.max(0, facts.length - SHOW_SEARCH) }))
 }
 
-async function openFix($: Engine, f: PaneFact): Promise<void> {
+/** Opens the Fix box under one row: `where` is the list ("u" used, "s" search), since one fact can be in both and
+ * two boxes would draw two elements with the same key, which the pane refuses to draw at all. */
+async function openFix($: Engine, f: PaneFact, where: string): Promise<void> {
   const out = await runPy($, 'pane.py', ['links', f.source_id, f.target_id], CAPTURE_TIMEOUT_MS)
   const links = Array.isArray(out?.links) ? (out.links as Fixing['links']) : []
-  await update($, fixing, () => ({ key: factKey(f), links }))
+  await update($, fixing, () => ({ key: `${where}:${factKey(f)}`, links }))
 }
 
 async function relinkFact($: Engine, f: PaneFact, link: string): Promise<void> {
@@ -542,20 +544,20 @@ export const register: Register = (on, options) => {
       // Fix and Forget on a fact; under it, while open, the Fix box: the right link, or words for Claude.
       const fixable = (prefix: string, f: PaneFact) => {
         const k = factKey(f)
-        const isOpen = fix?.key === k
+        const isOpen = fix?.key === `${prefix}:${k}`
         return (
           <Box key={`${prefix}:${k}`} flexDirection="column" rowGap="xs">
             {row(`${prefix}r:${k}`, f,
               <Box flexDirection="row" columnGap="xs">
                 <Button key={`fix:${prefix}:${k}`} label={isOpen ? 'Close' : 'Fix'} variant="secondary"
-                  onPress={() => void (isOpen ? update($, fixing, () => null) : openFix($, f))} />
+                  onPress={() => void (isOpen ? update($, fixing, () => null) : openFix($, f, prefix))} />
                 <Button key={`forget:${prefix === 'u' ? '' : `${prefix}:`}${k}`} label="Forget" variant="secondary" onPress={() => void forgetFact($, f)} />
               </Box>)}
             {isOpen && (
               <Box flexDirection="column" rowGap="xs" paddingLeft="md">
                 {fix.links.length > 0 && (
                   <el.Select
-                    key="fix-link"
+                    key={`fix-link:${prefix}`}
                     label="Link"
                     value={fix.links.some(l => l.value === f.predicate) ? f.predicate : fix.links[0]!.value}
                     options={fix.links}
@@ -563,7 +565,7 @@ export const register: Register = (on, options) => {
                   />
                 )}
                 <el.Input
-                  key="fix-tell"
+                  key={`fix-tell:${prefix}`}
                   placeholder="Or tell Claude what is true"
                   submitLabel="tell Claude"
                   onSubmit={value => void (value.trim() ? tellClaude($, f, value) : undefined)}
