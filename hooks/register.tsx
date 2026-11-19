@@ -2,6 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface as Engine, Register } from 'claude-code'
 
 import type { PaneFact, PaneView, Used } from '../types'
+import { clawdSvg } from './clawd'
 
 // graphcraft-memory, the mod side. Python (graph/) owns the graph; this module only decides when things run:
 // - prompt.submit: recall the facts linked to the prompt and attach them as context (never blocks a prompt)
@@ -158,9 +159,9 @@ async function memoryReport($: Engine): Promise<string> {
   const stats = await runPy($, 'store.py', ['stats'], CAPTURE_TIMEOUT_MS)
   const recent = await runPy($, 'capture.py', ['recent', '5'], CAPTURE_TIMEOUT_MS)
   const queued = await runPy($, 'capture.py', ['pending'], CAPTURE_TIMEOUT_MS)
-  if (!stats) return 'graphcraft-memory: could not read the graph (is Python 3 installed?).'
+  if (!stats) return 'Could not read the graph (is Python 3 installed?).'
   const lines = [
-    `graphcraft-memory: ${plural(Number(stats.entities ?? 0), 'node')}, ${plural(Number(stats.relations ?? 0), 'fact')}` +
+    `${plural(Number(stats.entities ?? 0), 'node')}, ${plural(Number(stats.relations ?? 0), 'fact')}` +
       ` from ${plural(Number(stats.origins ?? 0), 'source')}`,
     `graph: ${slash(String(stats.path ?? ''))}`, // forward slashes: a terminal's markdown eats "\."
   ]
@@ -285,8 +286,8 @@ export const register: Register = (on, options) => {
     const opened = await $.ui.open({ id: PANE, title: 'Memory', rows: PANE_ROWS })
     return {
       text: opened.isPlaced
-        ? 'graphcraft-memory: Memory pane opened.'
-        : `graphcraft-memory: the Memory pane is waiting for room (${opened.reason}). /graph-memory shows the same in text.`,
+        ? 'Memory pane opened.'
+        : `The Memory pane is waiting for room (${opened.reason}). /graph-memory shows the same in text.`,
     }
   })
 
@@ -309,92 +310,156 @@ export const register: Register = (on, options) => {
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const { Box, Text, Button } = $.ui.resolve(e)
+    const el = $.ui.resolve(e)
+    const { Box, Text, Button } = el
     try {
-    const u = await read($, used)
-    const v = await read($, view)
-    const fact = (f: PaneFact) => (
-      <Text wrap="wrap">
-        {f.source} <Text dimColor>{f.predicate}</Text> {f.target}
-      </Text>
-    )
-    const heading = (text: string) => <Text bold>{text}</Text>
-    const learned = v?.learned
-    return (
-      <Box flexDirection="column" gap={1}>
-        <Box flexDirection="row" justifyContent="space-between">
-          <Text bold>{v?.project || 'Memory'}</Text>
-          <Button
-            label="Open map"
-            dimColor
-            onPress={() => void runPy($, 'view.py', ['build', '--open'], CAPTURE_TIMEOUT_MS)}
-          />
-        </Box>
+      const u = await read($, used)
+      const v = await read($, view)
+      const learned = v?.learned
+      // Desktop draws each section as a card; the terminal has few rows, so there sections are plain.
+      const isDesktop = 'Svg' in el
+      const card = isDesktop ? ({ borderStyle: 'round', borderColor: 'subtle', paddingX: 'md', paddingY: 'sm' } as const) : {}
 
-        <Box flexDirection="column">
-          {heading(
-            'Used for this prompt' + (u && u.matched.length > 0 ? ` · matched ${u.matched.map(m => `"${m}"`).join(', ')}` : ''),
-          )}
-          {!u && <Text dimColor>Send a message: the facts recalled for it show here.</Text>}
-          {u && u.facts.length === 0 && <Text dimColor>Nothing in memory is linked to the last message.</Text>}
-          {(u?.facts ?? []).slice(0, SHOW_USED).map(f => (
-            <Box key={`u:${factKey(f)}`} flexDirection="row" justifyContent="space-between" gap={1}>
-              {fact(f)}
-              <Button key={`forget:${factKey(f)}`} label="Forget" dimColor onPress={() => void forgetFact($, f)} />
-            </Box>
-          ))}
-          {u && u.facts.length - SHOW_USED + u.more > 0 && (
-            <Text dimColor>+{u.facts.length - SHOW_USED + u.more} more · all in /graph-view</Text>
-          )}
-        </Box>
-
-        {learned && (
-          <Box flexDirection="column">
-            {heading(`Learned last session · ${plural(learned.total, 'fact')}`)}
-            {learned.facts.length === 0 && <Text dimColor>All reviewed.</Text>}
-            {learned.facts.slice(0, SHOW_LEARNED).map(f => (
-              <Box key={`l:${factKey(f)}`} flexDirection="row" justifyContent="space-between" gap={1}>
-                {fact(f)}
-                <Box flexDirection="row" gap={1}>
-                  <Button key={`keep:${factKey(f)}`} label="Keep" dimColor onPress={() => void keep($, learned.sessionId, [factKey(f)])} />
-                  <Button key={`drop:${factKey(f)}`} label="Drop" dimColor onPress={() => void forgetFact($, f)} />
-                </Box>
-              </Box>
-            ))}
-            {learned.facts.length > SHOW_LEARNED && (
-              <Text dimColor>+{learned.facts.length - SHOW_LEARNED} more to review</Text>
-            )}
-            {learned.facts.length > 0 && (
-              <Box flexDirection="row" gap={1}>
-                <Button label="Keep all" onPress={() => void keep($, learned.sessionId, learned.facts.map(factKey))} />
-                <Button
-                  label="Undo session"
-                  onPress={() =>
-                    void (async () => {
-                      const out = await runPy($, 'capture.py', ['undo', learned.sessionId], CAPTURE_TIMEOUT_MS)
-                      $.ui.toast(`memory: removed ${plural(Number(out?.relations ?? 0), 'fact')} from that session`)
-                      await refreshView($)
-                    })()
-                  }
-                />
-              </Box>
-            )}
+      const note = (text: string) => (
+        <Text dimColor size="footnote">
+          {text}
+        </Text>
+      )
+      const section = (title: string, count: string, body: unknown) => (
+        <Box flexDirection="column" rowGap="sm" {...card}>
+          <Box flexDirection="row" justifyContent="space-between" alignItems="center" columnGap="md">
+            <Text weight="semibold">{title}</Text>
+            {note(count)}
           </Box>
-        )}
+          {body}
+        </Box>
+      )
+      const row = (key: string, f: PaneFact, actions: unknown) => (
+        <Box key={key} flexDirection="row" justifyContent="space-between" alignItems="center" columnGap="md">
+          <Box flexDirection="column" flexShrink={1}>
+            <Text wrap="wrap">
+              <Text weight="medium">{f.source}</Text>
+              <Text dimColor size="footnote">{`  ${f.predicate.replace(/_/g, ' ')}  `}</Text>
+              <Text weight="medium">{f.target}</Text>
+            </Text>
+          </Box>
+          <Box flexDirection="row" columnGap="xs" flexShrink={0}>
+            {actions}
+          </Box>
+        </Box>
+      )
 
-        {v && v.problems.length > 0 && (
-          <Box flexDirection="column">
-            {heading(`Problems · ${v.project}`)}
-            {v.problems.map(p => (
-              <Text key={`p:${p.name}`} wrap="wrap">
-                <Text color={p.fixed ? 'success' : 'warning'}>{p.fixed ? 'fixed' : 'open'}</Text> {p.name}
-                {p.fixed && p.fixedBy ? <Text dimColor> · by {p.fixedBy}</Text> : ''}
+      const usedFacts = u?.facts ?? []
+      const hidden = u ? usedFacts.length - SHOW_USED + u.more : 0
+      const open = v?.problems.filter(p => !p.fixed).length ?? 0
+      const subtitle = [
+        u ? `${plural(usedFacts.length, 'fact')} recalled` : 'waiting for a message',
+        learned && learned.facts.length > 0 ? `${learned.facts.length} to review` : '',
+        open > 0 ? plural(open, 'open problem') : '',
+      ]
+        .filter(Boolean)
+        .join(' · ')
+
+      return (
+        <Box flexDirection="column" rowGap="md">
+          <Box flexDirection="row" justifyContent="space-between" alignItems="center" columnGap="md">
+            <Box flexDirection="column" flexShrink={1}>
+              <Text weight="semibold" size="heading">
+                {v?.project || 'Memory'}
               </Text>
-            ))}
+              {note(subtitle)}
+            </Box>
+            <Box flexDirection="row" alignItems="center" columnGap="sm" flexShrink={0}>
+              {'Svg' in el && (
+                <el.Svg
+                  source={clawdSvg(usedFacts.length > 0)}
+                  alt={usedFacts.length > 0 ? 'Clawd recalling memories' : 'Clawd waiting'}
+                  width={60}
+                  height={32}
+                />
+              )}
+              <Button
+                label="Open map"
+                variant="secondary"
+                onPress={() => void runPy($, 'view.py', ['build', '--open'], CAPTURE_TIMEOUT_MS)}
+              />
+            </Box>
           </Box>
-        )}
-      </Box>
-    )
+
+          {section(
+            'Used for this prompt',
+            u && u.matched.length > 0 ? `matched ${u.matched.map(m => `"${m}"`).join(', ')}` : '',
+            <Box flexDirection="column" rowGap="sm">
+              {!u && note('Send a message: the facts recalled for it show here.')}
+              {u && usedFacts.length === 0 && note('Nothing in memory is linked to the last message.')}
+              {usedFacts.slice(0, SHOW_USED).map(f =>
+                row(
+                  `u:${factKey(f)}`,
+                  f,
+                  <Button key={`forget:${factKey(f)}`} label="Forget" variant="secondary" onPress={() => void forgetFact($, f)} />,
+                ),
+              )}
+              {hidden > 0 && note(`+${hidden} more · all in the map`)}
+            </Box>,
+          )}
+
+          {learned &&
+            section(
+              'Learned last session',
+              plural(learned.total, 'fact'),
+              <Box flexDirection="column" rowGap="sm">
+                {learned.facts.length === 0 && note('All reviewed.')}
+                {learned.facts.slice(0, SHOW_LEARNED).map(f =>
+                  row(
+                    `l:${factKey(f)}`,
+                    f,
+                    <Box flexDirection="row" columnGap="xs">
+                      <Button key={`keep:${factKey(f)}`} label="Keep" variant="secondary" onPress={() => void keep($, learned.sessionId, [factKey(f)])} />
+                      <Button key={`drop:${factKey(f)}`} label="Drop" variant="secondary" onPress={() => void forgetFact($, f)} />
+                    </Box>,
+                  ),
+                )}
+                {learned.facts.length > SHOW_LEARNED && note(`+${learned.facts.length - SHOW_LEARNED} more to review`)}
+                {learned.facts.length > 0 && (
+                  <Box flexDirection="row" columnGap="sm" marginTop="xs">
+                    <Button label="Keep all" variant="primary" onPress={() => void keep($, learned.sessionId, learned.facts.map(factKey))} />
+                    <Button
+                      label="Undo session"
+                      variant="secondary"
+                      onPress={() =>
+                        void (async () => {
+                          const out = await runPy($, 'capture.py', ['undo', learned.sessionId], CAPTURE_TIMEOUT_MS)
+                          $.ui.toast(`memory: removed ${plural(Number(out?.relations ?? 0), 'fact')} from that session`)
+                          await refreshView($)
+                        })()
+                      }
+                    />
+                  </Box>
+                )}
+              </Box>,
+            )}
+
+          {v &&
+            v.problems.length > 0 &&
+            section(
+              'Problems',
+              open > 0 ? `${open} open` : 'all fixed',
+              <Box flexDirection="column" rowGap="sm">
+                {v.problems.map(p => (
+                  <Box key={`p:${p.name}`} flexDirection="row" columnGap="sm" alignItems="flex-start">
+                    <Text color={p.fixed ? 'success' : 'warning'} size="footnote" weight="semibold">
+                      {p.fixed ? '✓ fixed' : '● open'}
+                    </Text>
+                    <Box flexDirection="column" flexShrink={1}>
+                      <Text wrap="wrap">{p.name}</Text>
+                      {p.fixed && p.fixedBy ? note(`by ${p.fixedBy}`) : null}
+                    </Box>
+                  </Box>
+                ))}
+              </Box>,
+            )}
+        </Box>
+      )
     } catch (err) {
       // Logged and shown, so a pane that draws nothing can be told from one with nothing to show.
       $.ui.log(`graphcraft-memory: pane failed to draw: ${String(err).slice(0, 300)}`, { to: 'debug' })
@@ -409,22 +474,22 @@ export const register: Register = (on, options) => {
     if (e.args.trim()) args.push('--project', e.args.trim())
     const out = await runPy($, 'view.py', args, CAPTURE_TIMEOUT_MS)
     if (!out || typeof out.path !== 'string')
-      return { text: `graphcraft-memory: could not build the map (${String(out?.error ?? 'is Python 3 installed?')}).` }
+      return { text: `Could not build the map (${String(out?.error ?? 'is Python 3 installed?')}).` }
     const where = slash(out.path)
     const counts = `${plural(Number(out.nodes ?? 0), 'node')}, ${plural(Number(out.edges ?? 0), 'fact')}`
     return {
       text: out.opened
-        ? `graphcraft-memory: map opened in your browser (${counts}).\nFile: ${where}`
-        : `graphcraft-memory: map written (${counts}). Open it in your browser: ${String(out.url)}`,
+        ? `Map opened in your browser (${counts}).\nFile: ${where}`
+        : `Map written (${counts}). Open it in your browser: ${String(out.url)}`,
     }
   })
 
   on('command.run', { command: 'graph-memory-undo' }, async ($, e) => {
     const out = await runPy($, 'capture.py', ['undo', e.args.trim() || 'last'], CAPTURE_TIMEOUT_MS)
     if (!out || typeof out.undone !== 'string')
-      return { text: `graphcraft-memory: nothing undone (${String(out?.reason ?? out?.error ?? 'no answer')}).` }
+      return { text: `Nothing undone (${String(out?.reason ?? out?.error ?? 'no answer')}).` }
     return {
-      text: `graphcraft-memory: removed ${plural(Number(out.relations ?? 0), 'fact')} and ${plural(Number(out.entities ?? 0), 'node')} from session ${out.undone}.`,
+      text: `Removed ${plural(Number(out.relations ?? 0), 'fact')} and ${plural(Number(out.entities ?? 0), 'node')} from session ${out.undone}.`,
     }
   })
 

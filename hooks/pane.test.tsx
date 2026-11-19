@@ -71,7 +71,11 @@ test('the pane shows used facts, learned facts and problems, on terminal and des
     expect((await ui.find({ type: 'Text', text: /matched "Campfires"/ }))?.text).toBeTruthy()
     expect((await ui.find({ type: 'Text', text: /Linked anim layer/ }))?.text).toContain('decided')
     expect((await ui.find({ type: 'Text', text: /Short replies/ }))?.text).toContain('prefers')
-    expect((await ui.find({ type: 'Text', text: /Bedroll overrides/ }))?.text).toContain('open')
+    expect((await ui.find({ type: 'Text', text: /Bedroll overrides/ }))?.text).toBeTruthy()
+    expect((await ui.find({ type: 'Text', text: /● open/ }))?.text).toBeTruthy()
+    const clawd = await ui.find({ type: 'Svg' } as never)
+    if (surface === 'desktop') expect(clawd).toBeTruthy()
+    else expect(clawd).toBeFalsy()
     await ui.unmount()
   }
 })
