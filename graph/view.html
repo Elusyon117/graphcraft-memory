@@ -31,20 +31,46 @@ svg.panning{cursor:grabbing}
 .fact a{color:inherit;cursor:pointer;text-decoration:underline dotted}
 .empty{padding:40px;color:var(--text2);max-width:520px}
 code{font-family:ui-monospace,Consolas,monospace;font-size:12px}
+.tabs{display:inline-flex;border:1px solid var(--border2);border-radius:8px;overflow:hidden}
+.tabs button{border:0;border-radius:0;padding:4px 12px}
+.tabs button+button{border-left:1px solid var(--border2)}
+[hidden]{display:none!important}
+.tl{overflow:auto;padding:18px 24px 40px;min-height:0}
+.day{margin:6px 0 10px;font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.rail{position:relative;padding-left:22px;margin-bottom:18px}
+.rail::before{content:"";position:absolute;left:6px;top:4px;bottom:4px;width:2px;background:var(--border)}
+.card{position:relative;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:10px 14px;margin-bottom:10px;max-width:760px}
+.card::before{content:"";position:absolute;left:-21px;top:15px;width:10px;height:10px;border-radius:50%;background:var(--k,var(--accent));border:2px solid var(--bg)}
+.card .top{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.card .who{font-weight:600}
+.card .n{margin-left:auto;font-size:12px;color:var(--text2)}
+.card .new{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.card .new span{font-size:12px;color:var(--text2);display:inline-flex;align-items:center;gap:5px;background:var(--lane);border-radius:999px;padding:2px 9px}
+.card details{margin-top:8px}
+.card summary{cursor:pointer;font-size:12px;color:var(--accent)}
+.card .row{font-size:13px;padding:4px 0;border-top:1px solid var(--border)}
+.card .row .p{color:var(--accent)}
+.card .row.gone{color:var(--muted);text-decoration:line-through}
+.card .row .when{float:right;font-size:11px;color:var(--muted);text-decoration:none}
+.card .acts{margin-top:8px;display:flex;gap:8px}
+.only{display:flex;align-items:center;gap:8px;margin-bottom:10px;padding:8px 10px;border:1px solid var(--border2);border-radius:8px;color:var(--text)}
 </style>
 </head>
 <body>
 <div id="app">
   <div class="bar">
     <span class="title">graphcraft-memory</span>
+    <span class="tabs"><button id="tMap" class="on">Map</button><button id="tTime">Timeline</button></span>
     <span class="muted" id="counts"></span>
     <select id="project" title="Project"></select>
     <input id="q" placeholder="Find a node" autocomplete="off">
     <span style="flex:1"></span>
+    <span id="mapControls" style="display:contents">
     <button id="mStruct" class="on" title="Each type in its own column">Structured</button>
     <button id="mFree" title="Let the layout move freely">Free</button>
     <button id="why" title="Only decisions and their reasons">Why chains</button>
     <button id="fit" title="Fit everything in view">Fit</button>
+    </span>
   </div>
   <div class="bar" id="chips" style="padding:8px 16px"></div>
   <div class="main">
@@ -54,6 +80,7 @@ code{font-family:ui-monospace,Consolas,monospace;font-size:12px}
     </defs><g id="world"><g id="lanes"></g><g id="edges"></g><g id="nodes"></g></g></svg>
     <div class="side" id="side"></div>
   </div>
+  <div class="tl" id="timeline" hidden></div>
 </div>
 <script id="data" type="application/json">/*__GRAPH_DATA__*/null</script>
 <script>
@@ -80,6 +107,7 @@ const base = p => (p || '').split(/[\\/]/).filter(Boolean).pop() || p;
 
 // ---- state
 let mode = 'struct', whyOnly = false, focus = null, hover = null, project = DATA.startProject || '';
+let tab = 'map', only = null;  // only: one source's key ("session:<id>"), lit alone on the map
 const off = new Set();
 let nodes = [], edges = [], byId = new Map(), alpha = 1, running = false, autoFit = true;
 const view = {x: 0, y: 0, k: 1};
@@ -90,12 +118,23 @@ sel.appendChild(new Option('All projects', ''));
 DATA.projects.forEach(p => sel.appendChild(new Option(base(p), p)));
 const startMatch = DATA.projects.find(p => p === project || base(p).toLowerCase() === project.toLowerCase());
 project = startMatch || ''; sel.value = project;
-sel.onchange = () => { project = sel.value; focus = null; rebuild(); };
-$('q').oninput = paint;
+sel.onchange = () => { project = sel.value; focus = null; rebuild(); if (tab === 'time') drawTimeline(); };
+$('q').oninput = () => { paint(); if (tab === 'time') drawTimeline(); };
+$('tMap').onclick = () => setTab('map');
+$('tTime').onclick = () => setTab('time');
 $('mStruct').onclick = () => setMode('struct');
 $('mFree').onclick = () => setMode('free');
 $('why').onclick = e => { whyOnly = !whyOnly; e.target.classList.toggle('on', whyOnly); paint(); };
 $('fit').onclick = fit;
+
+function setTab(t) {
+  tab = t; $('tMap').classList.toggle('on', t === 'map'); $('tTime').classList.toggle('on', t === 'time');
+  document.querySelector('.main').hidden = t !== 'map'; $('chips').hidden = t !== 'map'; $('timeline').hidden = t !== 'time';
+  $('mapControls').style.display = t === 'map' ? 'contents' : 'none';
+  $('q').placeholder = t === 'map' ? 'Find a node' : 'Find in facts';
+  if (t === 'time') drawTimeline(); else { fit(); paint(); }
+}
+const keyOf = x => x.kind + ':' + x.ref;
 
 function setMode(m) { mode = m; $('mStruct').classList.toggle('on', m === 'struct'); $('mFree').classList.toggle('on', m === 'free'); $('lanes').style.display = m === 'struct' ? '' : 'none'; autoFit = true; kick(0.9); }
 
@@ -211,7 +250,10 @@ function place() {
 function neighbours(id) { const s = new Set([id]); edges.forEach(e => { if (e.s === id) s.add(e.t); if (e.t === id) s.add(e.s); }); return s; }
 function paint() {
   const q = $('q').value.trim().toLowerCase();
-  const key = hover || focus, near = key ? neighbours(key) : null;
+  const key = hover || focus;
+  let near = key ? neighbours(key) : null;
+  const fromOnly = e => !only || e.origins.some(x => keyOf(x) === only);
+  if (only && !key) { near = new Set(); edges.forEach(e => { if (fromOnly(e)) { near.add(e.s); near.add(e.t); } }); }
   const inWhy = new Set(); edges.forEach(e => { if (WHY.has(e.p)) { inWhy.add(e.s); inWhy.add(e.t); } });
   const visible = n => !off.has(n.type) && (!whyOnly || inWhy.has(n.id));
   const matches = n => !q || n.name.toLowerCase().includes(q) || (n.aliases || []).some(a => a.toLowerCase().includes(q));
@@ -220,7 +262,7 @@ function paint() {
     n.g.firstChild.setAttribute('stroke', n.id === focus ? 'var(--text)' : 'var(--bg)'); });
   const labels = view.k > 0.75;
   edges.forEach(e => { const show = visible(e.a) && visible(e.b) && (!whyOnly || WHY.has(e.p));
-    const hit = key && (e.s === key || e.t === key);
+    const hit = key ? (e.s === key || e.t === key) : only && fromOnly(e);
     e.path.style.display = e.label.style.display = show ? '' : 'none';
     e.path.setAttribute('stroke', hit ? 'var(--hi)' : 'var(--edge)'); e.path.setAttribute('stroke-width', hit ? 2.4 : 1.3);
     e.path.setAttribute('marker-end', hit ? 'url(#arh)' : 'url(#ar)');
@@ -231,6 +273,11 @@ function paint() {
 // ---- the details panel
 function side() {
   const box = $('side'); box.innerHTML = '';
+  if (only) { const b = document.createElement('div'); b.className = 'only';
+    const src = (DATA.sources || []).find(x => keyOf(x) === only);
+    b.append('Lit: ' + (src ? sourceName(src) + ' · ' + when(src.at) : only));
+    const x = document.createElement('button'); x.textContent = 'Show all'; x.style.marginLeft = 'auto';
+    x.onclick = () => { only = null; side(); paint(); }; b.appendChild(x); box.appendChild(b); }
   if (!focus || !byId.has(focus)) {
     const p = document.createElement('div');
     p.innerHTML = '<p>Hover a node to light up its links. Click it to see its facts here.</p><p class="muted">Drag nodes to move them, drag the background to pan, scroll to zoom. <b>Structured</b> keeps each type in its column; <b>Why chains</b> keeps only decisions and their reasons.</p>';
@@ -257,6 +304,59 @@ function side() {
   if (sessions.length) { const u = document.createElement('p'); u.className = 'muted'; u.style.marginTop = '12px';
     u.innerHTML = 'To remove what a session added, run <code>/graph-memory-undo &lt;session id&gt;</code> in Claude Code. Sessions here: ';
     const c = document.createElement('code'); c.textContent = sessions.join(', '); u.appendChild(c); box.appendChild(u); }
+}
+
+// ---- the timeline: every source newest first, by day; its facts, and the ones retired since
+const KIND_COLOR = {session: 'var(--accent)', feeder: '#1D9E75', file: '#888780'};
+function sourceName(x) { return x.kind === 'session' ? 'Session ' + short(x.ref) : x.kind + ' ' + x.ref; }
+function drawTimeline() {
+  const box = $('timeline'); box.innerHTML = '';
+  const q = $('q').value.trim().toLowerCase();
+  const names = new Map(DATA.nodes.map(n => [n.id, n]));
+  const nameOf = id => (names.get(id) || {name: '?'}).name;
+  const factsOf = x => [
+    ...DATA.edges.filter(e => keyOf(e) === keyOf(x)).map(e => ({...e, gone: false})),
+    ...(DATA.retired || []).filter(e => keyOf(e) === keyOf(x)).map(e => ({...e, gone: true})),
+  ].sort((a, b) => a.at - b.at);
+  const text = f => (nameOf(f.s) + ' ' + f.p + ' ' + nameOf(f.t)).toLowerCase();
+  const live = new Set(DATA.edges.flatMap(e => [e.s, e.t]));
+  const list = (DATA.sources || []).filter(x => !project || x.project === project)
+    .map(x => ({...x, rows: factsOf(x)})).filter(x => x.rows.length && (!q || x.rows.some(f => text(f).includes(q))))
+    .sort((a, b) => b.at - a.at);
+  if (!list.length) { box.innerHTML = '<div class="empty"><h2>Nothing here yet</h2><p>Sessions appear here once graphcraft-memory has read them (at the next session start), and so do facts Claude saves with memory_remember.</p></div>'; return; }
+  let day = '', rail = null;
+  list.forEach(x => {
+    const d = new Date(x.at * 1000).toLocaleDateString(undefined, {weekday: 'short', month: 'short', day: 'numeric', year: 'numeric'});
+    if (d !== day) { day = d; const h = document.createElement('div'); h.className = 'day'; h.textContent = d; box.appendChild(h);
+      rail = document.createElement('div'); rail.className = 'rail'; box.appendChild(rail); }
+    const c = document.createElement('div'); c.className = 'card'; c.style.setProperty('--k', KIND_COLOR[x.kind] || 'var(--accent)');
+    const top = document.createElement('div'); top.className = 'top';
+    const who = document.createElement('span'); who.className = 'who'; who.textContent = sourceName(x);
+    const t = document.createElement('span'); t.className = 'muted';
+    t.textContent = new Date(x.at * 1000).toLocaleTimeString(undefined, {hour: '2-digit', minute: '2-digit'}) + (x.project ? ' · ' + base(x.project) : '');
+    const n = document.createElement('span'); n.className = 'n';
+    n.textContent = '+' + x.facts + (x.facts === 1 ? ' fact' : ' facts') + (x.retired ? ' · ' + x.retired + ' retired since' : '');
+    top.append(who, t, n); c.appendChild(top);
+    const fresh = DATA.nodes.filter(m => m.origin === keyOf(x) && live.has(m.id));  // nodes still in some live fact
+    if (fresh.length) { const nw = document.createElement('div'); nw.className = 'new';
+      fresh.slice(0, 10).forEach(m => { const s = document.createElement('span'); const dt = document.createElement('i'); dt.className = 'dot'; dt.style.background = colorOf(m.type);
+        s.append(dt, m.name); s.title = m.type.toLowerCase() + (m.description ? ': ' + m.description : ''); nw.appendChild(s); });
+      if (fresh.length > 10) { const s = document.createElement('span'); s.textContent = '+' + (fresh.length - 10) + ' more'; nw.appendChild(s); }
+      c.appendChild(nw); }
+    const det = document.createElement('details'); if (q) det.open = true;
+    const sm = document.createElement('summary'); sm.textContent = 'Facts'; det.appendChild(sm);
+    x.rows.filter(f => !q || text(f).includes(q)).forEach(f => { const r = document.createElement('div'); r.className = 'row' + (f.gone ? ' gone' : '');
+      const p = document.createElement('span'); p.className = 'p'; p.textContent = ' ' + f.p + ' ';
+      r.append(nameOf(f.s), p, nameOf(f.t));
+      if (f.gone) { const w = document.createElement('span'); w.className = 'when'; w.textContent = 'retired ' + when(f.retiredAt); r.appendChild(w); }
+      det.appendChild(r); });
+    c.appendChild(det);
+    if (x.facts) { const acts = document.createElement('div'); acts.className = 'acts';
+      const b = document.createElement('button'); b.textContent = 'Show on map';
+      b.onclick = () => { only = keyOf(x); focus = null; if (project && x.project !== project) { project = ''; sel.value = ''; rebuild(); } setTab('map'); side(); paint(); };
+      acts.appendChild(b); c.appendChild(acts); }
+    rail.appendChild(c);
+  });
 }
 
 function showEmpty() {

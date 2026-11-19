@@ -1,6 +1,6 @@
 {
   "name": "graphcraft-memory",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Knowledge-graph memory for Claude Code: facts from every session are linked into one graph per machine, and the relevant part is handed to Claude before each prompt. Other mods (like zonecraft) can feed it.",
   "author": {
     "name": "Elusyon117",

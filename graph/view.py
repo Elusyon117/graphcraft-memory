@@ -23,8 +23,10 @@ PLACEHOLDER = "/*__GRAPH_DATA__*/null"
 
 
 def export(db) -> dict:
-    nodes = [{"id": i, "name": n, "type": t, "description": d, "scope": s}
-             for i, n, t, d, s in db.execute("SELECT id, name, type, description, scope FROM entities")]
+    nodes = [{"id": i, "name": n, "type": t, "description": d, "scope": s, "origin": f"{k}:{r}" if k else ""}
+             for i, n, t, d, s, k, r in db.execute(
+                 "SELECT e.id, e.name, e.type, e.description, e.scope, o.kind, o.ref FROM entities e"
+                 " LEFT JOIN origins o ON o.id = e.origin_id")]
     edges = [{"s": s, "t": t, "p": p, "kind": k, "ref": r, "project": pr, "at": round(at)}
              for s, t, p, k, r, pr, at in db.execute(
                  "SELECT r.source_id, r.target_id, r.predicate, o.kind, o.ref, o.project, r.created"
@@ -35,8 +37,20 @@ def export(db) -> dict:
     for n in nodes:
         n["aliases"] = aliases.get(n["id"], [])
     projects = sorted({e["project"] for e in edges if e["project"]})
+    # For the timeline: every source in the order it first wrote, and the facts retired since (kept apart from
+    # "edges", so the map never draws them).
+    sources = [{"kind": k, "ref": r, "project": p, "at": round(at), "facts": n, "retired": m}
+               for k, r, p, at, n, m in db.execute(
+                   "SELECT o.kind, o.ref, o.project, o.at,"
+                   " (SELECT COUNT(*) FROM relations r WHERE r.origin_id = o.id AND r.retired IS NULL),"
+                   " (SELECT COUNT(*) FROM relations r WHERE r.origin_id = o.id AND r.retired IS NOT NULL)"
+                   " FROM origins o ORDER BY o.at")]
+    retired = [{"s": s, "t": t, "p": p, "kind": k, "ref": r, "project": pr, "at": round(at), "retiredAt": round(rt)}
+               for s, t, p, k, r, pr, at, rt in db.execute(
+                   "SELECT r.source_id, r.target_id, r.predicate, o.kind, o.ref, o.project, r.created, r.retired"
+                   " FROM relations r JOIN origins o ON o.id = r.origin_id WHERE r.retired IS NOT NULL")]
     return {"generated": round(time.time()), "db": str(store.db_path()), "nodes": nodes, "edges": edges,
-            "projects": projects}
+            "projects": projects, "sources": sources, "retired": retired}
 
 
 def render(data: dict) -> str:
@@ -48,7 +62,8 @@ def render(data: dict) -> str:
 def build(out: str = "", project: str = "", open_it: bool = False) -> dict:
     db = store.connect(create=False)
     if db is None:
-        data = {"generated": round(time.time()), "db": str(store.db_path()), "nodes": [], "edges": [], "projects": []}
+        data = {"generated": round(time.time()), "db": str(store.db_path()), "nodes": [], "edges": [], "projects": [],
+                "sources": [], "retired": []}
     else:
         with closing(db):
             data = export(db)

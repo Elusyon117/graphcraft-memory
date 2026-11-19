@@ -53,6 +53,30 @@ class ViewTest(unittest.TestCase):
             store.retire(db, "Bedroll Mod", "overrides", "AnimBP_Player")
             self.assertEqual(len(view.export(db)["edges"]), 4)
 
+    def test_timeline_data_lists_sources_and_retired_facts(self):
+        with closing(store.connect()) as db:
+            store.upsert(db, {"nodes": [{"name": "Zone Kit", "type": "TOOL"}],
+                              "edges": [{"source": "Campfires", "predicate": "tried", "target": "Zone Kit"}]},
+                         store.add_origin(db, "feeder", "zonecraft:conflicts"), VOCAB)
+            store.retire(db, "Bedroll Mod", "overrides", "AnimBP_Player")
+            data = view.export(db)
+        sources = {(s["kind"], s["ref"]): s for s in data["sources"]}
+        self.assertEqual((sources[("session", "s-1")]["facts"], sources[("session", "s-1")]["retired"]), (4, 1))
+        self.assertEqual(sources[("feeder", "zonecraft:conflicts")]["facts"], 1)
+        self.assertEqual([s["at"] for s in data["sources"]], sorted(s["at"] for s in data["sources"]))
+        self.assertEqual(len(data["retired"]), 1)
+        self.assertEqual(data["retired"][0]["p"], "overrides")
+        self.assertGreater(data["retired"][0]["retiredAt"], 0)
+        self.assertNotIn("overrides", [e["p"] for e in data["edges"] if e["s"] == data["retired"][0]["s"]])
+        kit = next(n for n in data["nodes"] if n["name"] == "Zone Kit")
+        self.assertEqual(kit["origin"], "feeder:zonecraft:conflicts")
+
+    def test_page_has_the_timeline_tab(self):
+        _, html = self.build()
+        self.assertIn('id="tTime"', html)
+        self.assertIn('id="timeline"', html)
+        self.assertEqual(embedded(html)["sources"][0]["ref"], "s-1")
+
     def test_page_embeds_the_data(self):
         out, html = self.build(project="Campfires")
         data = embedded(html)
