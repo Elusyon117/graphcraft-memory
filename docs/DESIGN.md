@@ -168,7 +168,8 @@ already tried, before Claude replies, and it survives compaction because it is r
 - Big graphs: facts are ranked by one score, importance (the kind of link; decisions, problems, preferences; said by
   several sources) less a cost per link away and for another project, newest first among equals; from any node
   only its 40 weightiest links are walked, and a person is not walked through unless named. Tested on 3,000 facts
-  (`tests/test_ranking.py`): an old decision and its reason still come first, in about 15 ms.
+  (`tests/test_ranking.py`): an old decision and its reason still come first, in about 15 ms. A fact linking two
+  things the prompt named comes before all of that, so "does Campfires still use Wwise?" finds an old light fact.
 - One thing saved under two types (a concept and a tool): a new name already in memory as another type reuses that
   node unless a fact needs the new type; `store.py merge` (run at session start) joins pairs already split, when
   every live fact still fits the vocabulary, keeping each fact's source.

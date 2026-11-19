@@ -74,5 +74,41 @@ class RankingTest(unittest.TestCase):
         self.assertLess(ms, 80, f"recall took {ms:.1f} ms on {3000} facts")
 
 
+class NamedFactTest(unittest.TestCase):
+    """An old, light fact whose two ends the prompt names must not lose to many newer decisions about the project."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.db = store.connect(Path(cls.tmp.name) / "graph.db")
+        old = store.add_origin(cls.db, "session", "old")
+        store.upsert(cls.db, {
+            "nodes": [{"name": "Campfires", "type": "PROJECT"}, {"name": "Wwise", "type": "TOOL"},
+                      {"name": "Ember shader", "type": "FILE"}],
+            "edges": [{"source": "Campfires", "predicate": "uses", "target": "Wwise"},
+                      {"source": "Ember shader", "predicate": "part_of", "target": "Campfires"}]}, old, VOCAB)
+        cls.db.execute("UPDATE relations SET created=created-90*86400 WHERE origin_id=?", (old,))
+        for i in range(30):
+            o = store.add_origin(cls.db, "session", f"s{i}")
+            store.upsert(cls.db, {
+                "nodes": [{"name": "Campfires", "type": "PROJECT"}, {"name": f"Choice {i}", "type": "DECISION"},
+                          {"name": f"Bug {i}", "type": "PROBLEM"}],
+                "edges": [{"source": "Campfires", "predicate": "decided", "target": f"Choice {i}"},
+                          {"source": f"Choice {i}", "predicate": "because", "target": f"Bug {i}"}]}, o, VOCAB)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.db.close()
+        cls.tmp.cleanup()
+
+    def first(self, prompt):
+        t = recall.recall(prompt, db=self.db)["triples"][0]
+        return t["source"], t["predicate"], t["target"]
+
+    def test_the_fact_asked_about_comes_first(self):
+        self.assertEqual(self.first("does Campfires still use Wwise?"), ("Campfires", "uses", "Wwise"))
+        self.assertEqual(self.first("is Ember shader part of Campfires?"), ("Ember shader", "part_of", "Campfires"))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -17,7 +17,7 @@ Steps:
    weightiest facts are the ones reached.
 3. Rank by one score: importance (the kind of link, decisions, problems and preferences, a fact several sources
    said), less NEAR_COST per link away from what the prompt named, less OTHER_PROJECT for another project's facts;
-   newest first among equals. So an old decision and its reason are not crowded out by many newer, lighter notes
+   newest first among equals. A fact linking two things the prompt named gets BOTH_NAMED on top. So an old decision and its reason are not crowded out by many newer, lighter notes
    about the same thing, while a weighty fact one link out still beats a trivial one next to the seed.
 4. Trim: at most MAX_FACTS facts and MAX_CHARS characters (about 400 tokens).
 """
@@ -41,6 +41,8 @@ MAX_CHARS = 1800
 PER_NODE = 40
 NEAR_COST = 1.5
 OTHER_PROJECT = 1.0
+# A fact linking two things the prompt named is what it asks about: it comes before any weightier neighbour.
+BOTH_NAMED = 5
 # How much a kind of link says. Reasons, choices, problems and preferences matter most; "part of" and
 # "references" are the notes a big graph has thousands of. Unlisted predicates (a feeder's own) weigh 1.
 WEIGHT = {"because": 3, "fixed_by": 3, "decided": 3, "blocked_by": 3, "avoids": 3, "prefers": 3, "crashed_with": 3,
@@ -177,6 +179,7 @@ def recall(prompt: str, cwd: str = "", hops: int = 2, db=None, max_facts: int = 
         f" WHERE r.retired IS NULL AND r.source_id IN ({marks}) AND r.target_id IN ({marks})", ids + ids).fetchall()
 
     here = os.path.normcase(os.path.abspath(cwd)) if cwd else ""
+    prompted = seeds | fuzzy
     said = {}  # how many sources said each fact: one said in several sessions weighs more
     for row in rows:
         said[(row[3], row[1], row[4])] = said.get((row[3], row[1], row[4]), 0) + 1
@@ -186,7 +189,8 @@ def recall(prompt: str, cwd: str = "", hops: int = 2, db=None, max_facts: int = 
         proj = os.path.normcase(os.path.abspath(row[7])) if row[7] else ""
         other_project = 1 if proj and proj != here else 0
         importance = weight(row[1], row[9], row[10]) + 0.5 * (said[(row[3], row[1], row[4])] - 1)
-        score = importance - NEAR_COST * near - OTHER_PROJECT * other_project
+        both = BOTH_NAMED if row[3] in prompted and row[4] in prompted else 0
+        score = importance + both - NEAR_COST * near - OTHER_PROJECT * other_project
         return (-score, near, -row[8], row[0], row[1], row[2])
 
     triples, seen, used = [], set(), set()
