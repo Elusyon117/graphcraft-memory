@@ -6,7 +6,7 @@ r"""Recall kept warm: one Python process for the session, so a prompt does not p
 It listens on 127.0.0.1 only, on a free port, and answers only a request carrying the token the mod sets in
 GRAPHCRAFT_TOKEN (so no other program on the PC can read memory through it):
 
-    POST /recall   {"prompt", "cwd"}  ->  recall.py --json's answer
+    POST /recall   {"prompt", "cwd", "session"}  ->  recall.py --json's answer
 
 The mod starts it at session start and falls back to running recall.py once per prompt whenever it is not answering.
 It ends with the session (the mod's spawn loop), or on its own after IDLE_S without a request.
@@ -53,7 +53,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             data = json.loads(self.rfile.read(size).decode("utf-8") or "{}")
             prompt, cwd = str(data.get("prompt", "")), str(data.get("cwd", ""))
-            out = recall.recall(prompt, cwd)
+            out = recall.recall(prompt, cwd, session=str(data.get("session", "")))
             out["db"] = str(store.db_path())
             out["prompt_chars"] = len(prompt)
             self.answer(200, out)

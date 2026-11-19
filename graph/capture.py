@@ -37,9 +37,9 @@ MIN_USER_TURNS = 3       # fewer new user messages than this: not worth a model 
 MAX_DIGEST_CHARS = 24000  # the newest part of the conversation is kept when it is longer
 MAX_MESSAGE_CHARS = 2500  # one long paste or reply is cut to its start
 MAX_TRIES = 3
-KNOWN_NAMES = 60
+KNOWN_NAMES = 40
 KNOWN_FUZZY = 20    # nodes found by the conversation's words, not their names
-KNOWN_DESC = 120
+KNOWN_DESC = 80
 
 SECRET = re.compile(
     r"(sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|xox[abpr]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16}"

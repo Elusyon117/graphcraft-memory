@@ -90,7 +90,7 @@ function startWarm($: Engine, py: readonly string[]): void {
 }
 
 /** Recall through the warm process; undefined when it is not there or does not answer in time. */
-async function recallWarm($: Engine, prompt: string, cwd: string): Promise<Recalled | undefined> {
+async function recallWarm($: Engine, prompt: string, cwd: string, session: string): Promise<Recalled | undefined> {
   const w = warm
   if (!w) return undefined
   try {
@@ -99,7 +99,7 @@ async function recallWarm($: Engine, prompt: string, cwd: string): Promise<Recal
       $.http.fetch(`http://127.0.0.1:${w.port}/recall`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Token': w.token },
-        body: JSON.stringify({ prompt, cwd }),
+        body: JSON.stringify({ prompt, cwd, session }),
       }),
       late,
     ])
@@ -318,6 +318,11 @@ async function registerRemember($: Engine, vocab: Vocab): Promise<void> {
   })
 }
 
+/** A new round of recall's "already sent" list for this session (after a compaction or a rewind). */
+async function bumpRound($: Engine, sid: string): Promise<void> {
+  await $.store.set(`compactions:${sid}`, Number((await $.store.get(`compactions:${sid}`)) ?? 0) + 1)
+}
+
 const factKey = (f: PaneFact) => `${f.source_id}|${f.predicate}|${f.target_id}`
 
 /** Facts the person pressed Keep on, for the session they came from: they leave the Learned list. */
@@ -432,12 +437,25 @@ export const register: Register = (on, options) => {
     // words, so a long paste is cut to stay under Windows' command-line limit.
     const prompt = e.text.slice(0, MAX_PROMPT_CHARS)
     const cwd = await $.session.cwd()
-    let out = isWarm ? await recallWarm($, prompt, cwd) : undefined
+    // Facts this session was already given are not sent again (recall.py keeps the list). A compaction summarizes
+    // them away and a rewind cuts them off, so either starts a new list: a new round of the same session.
+    const sid = await $.session.id()
+    try {
+      const count = ((await $.session.messages()) as readonly Turn[]).length
+      const before = Number((await $.store.get(`messages:${sid}`)) ?? 0)
+      if (count < before) await bumpRound($, sid) // rewound: what was sent after this point is gone
+      await $.store.set(`messages:${sid}`, count)
+    } catch {
+      // no message list here: compactions still start new rounds
+    }
+    const round = Number((await $.store.get(`compactions:${sid}`)) ?? 0)
+    const session = `${sid}.${round}`
+    let out = isWarm ? await recallWarm($, prompt, cwd, session) : undefined
     const how = out ? 'warm' : 'cold'
     if (!out) {
       if (isWarm) startWarm($, py) // for the next prompt
       const r = await $.process.run(
-        [...py, '-I', `${slash($.plugin.root)}/graph/recall.py`, '--json', '--cwd', cwd, '--', prompt],
+        [...py, '-I', `${slash($.plugin.root)}/graph/recall.py`, '--json', '--cwd', cwd, '--session', session, '--', prompt],
         { timeoutMs: RECALL_TIMEOUT_MS },
       )
       if (r.exitCode !== 0) {
@@ -915,6 +933,9 @@ export const register: Register = (on, options) => {
   })
 
   on('session.compact', async ($, e, next) => {
+    if (e.agentId === undefined && e.trigger !== 'precompute') {
+      await bumpRound($, await $.session.id())
+    }
     if (isCapturing && e.agentId === undefined && e.trigger !== 'precompute') {
       try {
         await saveJob($, 'pending', 'compact', e.messages)

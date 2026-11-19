@@ -35,7 +35,7 @@ const PANE = {
   },
 } as const
 
-function engine(on: Parameters<Parameters<typeof test>[1]>[1], calls: string[][]) {
+function engine(on: Parameters<Parameters<typeof test>[1]>[1], calls: string[][], kept?: Map<string, unknown>) {
   on('command.register', () => ({ value: undefined }))
   on('tool.register', (_, e) => ({ value: { tool: `mcp__graphcraft-memory__${e.name}` } }))
   on('session.id', () => ({ value: 'sess-1' }))
@@ -50,8 +50,11 @@ function engine(on: Parameters<Parameters<typeof test>[1]>[1], calls: string[][]
     calls.push(['prompt', e.text])
     return e
   })
-  on('store.get', () => ({ value: undefined }))
-  on('store.set', () => ({ value: undefined }))
+  on('store.get', (_, e) => ({ value: kept?.get(e.key) }))
+  on('store.set', (_, e) => {
+    kept?.set(e.key, e.value)
+    return { value: undefined }
+  })
   on('store.delete', () => ({ value: undefined }))
   on('ui.log', () => ({ value: undefined }))
   on('ui.status', () => ({ value: undefined }))
@@ -354,4 +357,26 @@ test('the settings reach Python at session start, and warm recall can be switche
   await $.prompt.submit({ text: 'why did Campfires crash?' })
   expect(calls.some(c => c.join(' ').includes('recall.py'))).toBe(true)
   expect(calls.some(c => c[0] === 'spawn')).toBe(false)
+})
+
+test('recall is told the session, so facts already given are not sent again', { options: { capture: false, warmRecall: false } }, async ($, on) => {
+  const calls: string[][] = []
+  engine(on, calls)
+  await $.prompt.submit({ text: 'why did Campfires crash?' })
+  const run = calls.find(c => c.join(' ').includes('recall.py'))
+  expect(run?.slice(run.indexOf('--session'), run.indexOf('--session') + 2)).toEqual(['--session', 'sess-1.0'])
+})
+
+test('after a rewind, recall starts a fresh list of what was sent', { options: { capture: false, warmRecall: false } }, async ($, on) => {
+  const calls: string[][] = []
+  engine(on, calls, new Map())
+  let length = 4
+  on('session.messages', () => ({ value: Array.from({ length }, (_, i) => ({ role: i % 2 ? 'assistant' : 'user', text: `m${i}` })) }))
+  const sessions = () => calls.filter(c => c.join(' ').includes('recall.py')).map(c => c[c.indexOf('--session') + 1])
+  await $.prompt.submit({ text: 'why did Campfires crash?' })
+  length = 6
+  await $.prompt.submit({ text: 'and Bedroll?' })
+  length = 2 // rewound to an earlier message
+  await $.prompt.submit({ text: 'why did Campfires crash?' })
+  expect(sessions()).toEqual(['sess-1.0', 'sess-1.0', 'sess-1.1'])
 })

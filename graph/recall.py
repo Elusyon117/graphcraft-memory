@@ -58,8 +58,7 @@ def weight(predicate: str, *types: str) -> float:
     return WEIGHT.get(predicate, 1) + (1 if WEIGHTY_TYPES & set(types) else 0)
 STOP = {"the", "and", "for", "with", "this", "that", "what", "why", "how", "when", "where", "who", "was", "are",
         "you", "can", "did", "does", "not", "but", "from", "into", "then", "there", "it's", "its", "our", "your"}
-HEADER = ("graphcraft-memory: facts from earlier sessions and installed mods that are linked to this prompt. "
-          "Use them when relevant; they can be out of date, and what you read in files now wins.")
+HEADER = "graphcraft-memory (linked to this message; may be out of date, files win):"
 
 
 def ngrams(text: str) -> list:
@@ -134,6 +133,41 @@ def walk(db, seeds: set, hops: int, later: dict | None = None) -> dict:
     return depth
 
 
+def short_origin(origin: str) -> str:
+    """'session:9df5caa2-ee6c-…' -> 's:9df5caa2': a full id costs ~25 tokens a line, and its first characters are
+    enough for /graph-memory-undo and the map. Feeders and files keep their names."""
+    kind, _, ref = origin.partition(":")
+    return f"s:{ref[:8]}" if kind == "session" else origin
+
+
+SENT_KEEP_S = 3 * 86400
+
+
+def _sent_path(session: str) -> Path:
+    safe = re.sub(r"[^A-Za-z0-9_.-]", "_", session)[:120]
+    return store.db_path().parent / "sent" / f"{safe}.txt"
+
+
+def _load_sent(session: str) -> set:
+    try:
+        return set(_sent_path(session).read_text(encoding="utf-8").split())
+    except OSError:
+        return set()
+
+
+def _save_sent(session: str, keys: set) -> None:
+    path = _sent_path(session)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("\n".join(sorted(keys)), encoding="utf-8")
+        now = time.time()
+        for old in path.parent.glob("*.txt"):  # sessions long gone
+            if now - old.stat().st_mtime > SENT_KEEP_S:
+                old.unlink(missing_ok=True)
+    except OSError:
+        pass  # memory still works; it just may repeat itself
+
+
 def _hub_info(db, ids: list) -> dict:
     """{id: (live links, type)} in two queries for the whole frontier, instead of two per node."""
     out = {}
@@ -160,7 +194,7 @@ def _degree(db, eid: str) -> int:
 
 
 def recall(prompt: str, cwd: str = "", hops: int | None = None, db=None, max_facts: int | None = None,
-           max_chars: int | None = None, seeds: set | None = None, with_project: bool = True) -> dict:
+           max_chars: int | None = None, seeds: set | None = None, with_project: bool = True, session: str = "") -> dict:
     """The prompt hook's recall; memory_search passes bigger limits and, when it found seeds its own way, those.
     What is not given comes from the user's settings (store.settings): how many facts, how far, which types,
     whether other projects' facts may come."""
@@ -176,7 +210,7 @@ def recall(prompt: str, cwd: str = "", hops: int | None = None, db=None, max_fac
         if db is None:
             return empty
         with closing(db):
-            return recall(prompt, cwd, hops, db, max_facts, max_chars, seeds, with_project)
+            return recall(prompt, cwd, hops, db, max_facts, max_chars, seeds, with_project, session)
 
     fuzzy = set()
     if seeds is None:
@@ -233,33 +267,50 @@ def recall(prompt: str, cwd: str = "", hops: int | None = None, db=None, max_fac
                         "source_id": row[3], "target_id": row[4]})
         used |= {row[3], row[4]}
 
-    lines, size = [], len(HEADER)
+    # What this session was already given still sits in the conversation: send only what is new (the pane still
+    # lists everything recalled, marked "again"). Kept per session in a small file, so warm and cold runs agree.
+    sent = _load_sent(session) if session else set()
+    lines, size, new_keys, again = [], len(HEADER), [], 0
     for t in triples[:max_facts]:
-        line = f"{t['source']} --[{t['predicate']}]--> {t['target']}   ({t['origin']})"
+        k = "f:" + "|".join((t["source_id"], t["predicate"], t["target_id"]))
+        t["again"] = k in sent
+        if t["again"]:
+            again += 1
+            continue
+        line = f"{t['source']} --[{t['predicate']}]--> {t['target']}   ({short_origin(t['origin'])})"
         if size + len(line) > max_chars:
             break
         lines.append(line)
+        new_keys.append(k)
         size += len(line) + 1
-    kept = triples[:len(lines)]
+    kept = [t for t in triples[:max_facts] if t["again"] or "f:" + "|".join((t["source_id"], t["predicate"], t["target_id"])) in new_keys]
 
-    names = {n for t in kept for n in (t["source"], t["target"])}
+    names = {n for t in kept if not t["again"] for n in (t["source"], t["target"])}
     notes = []
-    for name, desc in db.execute(
-            f"SELECT name, description FROM entities WHERE description != '' AND id IN ({marks})", ids):  # noqa: S608
-        if name in names and size + len(desc) < max_chars:
+    for eid, name, desc in db.execute(
+            f"SELECT id, name, description FROM entities WHERE description != '' AND id IN ({marks})", ids):  # noqa: S608
+        if name in names and "n:" + eid not in sent and size + len(desc) < max_chars:
             notes.append(f"  {name}: {desc}")
+            new_keys.append("n:" + eid)
             size += len(name) + len(desc) + 4
 
     ms = (time.perf_counter() - t0) * 1000
-    if not lines:
+    if not kept:
         empty["ms"] = ms
         return empty
-    context = HEADER + "\n\n" + "\n".join(lines) + ("\n\nwhere:\n" + "\n".join(notes) if notes else "")
+    if session and new_keys:
+        _save_sent(session, sent | set(new_keys))
+    tail = f"\n({again} more linked facts were given earlier in this session and still apply.)" if again else ""
+    if lines:
+        context = HEADER + "\n" + "\n".join(lines) + ("\nwhere:\n" + "\n".join(notes) if notes else "") + tail
+    else:
+        context = f"graphcraft-memory: the {again} facts linked to this message were given earlier in this session and still apply."
+
     def names(ids_):
         marks_ = ",".join("?" * len(ids_))
         return [r[0] for r in db.execute(f"SELECT name FROM entities WHERE id IN ({marks_})", sorted(ids_))]  # noqa: S608
     matched = names(named) + ["~" + n for n in names(fuzzy - set(named))]  # ~: found by its words, not its name
-    return {"facts": len(lines), "ms": ms, "summary": f"memory: {len(lines)} facts, {ms:.0f} ms",
+    return {"facts": len(kept), "new": len(lines), "ms": ms, "summary": f"memory: {len(kept)} facts" + (f" ({len(lines)} new)" if again else "") + f", {ms:.0f} ms",
             "context": context, "triples": kept, "matched": matched, "more": len(triples) - len(kept)}
 
 
@@ -270,6 +321,7 @@ def main(argv=None) -> int:
     ap.add_argument("--hops", type=int, default=None)
     ap.add_argument("--stdin", action="store_true", help='read {"prompt", "cwd"} as JSON from stdin')
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--session", default="", help="leave out what this session (and compaction round) was already given")
     args = ap.parse_args(argv)
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -278,7 +330,7 @@ def main(argv=None) -> int:
     if args.stdin:
         data = json.loads(sys.stdin.buffer.read().decode("utf-8-sig") or "{}")
         prompt, cwd = data.get("prompt", ""), data.get("cwd", "")
-    out = recall(prompt, cwd, args.hops)  # None: the settings' depth
+    out = recall(prompt, cwd, args.hops, session=args.session)  # hops None: the settings' depth
     out["db"] = str(store.db_path())  # so the hook's debug line says which graph was read
     out["prompt_chars"] = len(prompt)  # and how much prompt text actually arrived
     print(json.dumps(out) if args.json else (out["context"] or "(no memory matches)"))

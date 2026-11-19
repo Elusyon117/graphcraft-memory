@@ -96,5 +96,28 @@ class SettingsTest(unittest.TestCase):
         self.assertIn("- TOOL:", system)
 
 
+class SentOnceTest(SettingsTest):
+    """Within one session, a fact already given is not sent again; the pane still sees it, marked."""
+
+    def test_a_second_message_gets_only_what_is_new(self):
+        first = recall.recall("Campfires", A, db=self.db, session="s1.0")
+        self.assertIn("(s:", first["context"])  # short source tags
+        self.assertNotIn("session:", first["context"])
+        again = recall.recall("Campfires Zone Kit", A, db=self.db, session="s1.0")
+        self.assertTrue(any(t["again"] for t in again["triples"]))
+        self.assertIn("given earlier in this session", again["context"])
+        self.assertLess(len(again["context"]), len(first["context"]))
+        fresh = recall.recall("Campfires", A, db=self.db, session="s1.1")  # after a compaction: all again
+        self.assertEqual(fresh["context"], first["context"])
+        alone = recall.recall("Campfires", A, db=self.db)  # memory_search and tests: no session, no memory of it
+        self.assertFalse(any(t["again"] for t in alone["triples"]))
+
+    def test_nothing_new_is_one_short_line(self):
+        recall.recall("Campfires", A, db=self.db, session="s2.0")
+        out = recall.recall("Campfires", A, db=self.db, session="s2.0")
+        self.assertTrue(out["context"].startswith("graphcraft-memory: the "))
+        self.assertLess(len(out["context"]), 140)
+
+
 if __name__ == "__main__":
     unittest.main()

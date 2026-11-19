@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <img alt="version" src="https://img.shields.io/badge/version-0.13.0-7F77DD">
+  <img alt="version" src="https://img.shields.io/badge/version-0.14.0-7F77DD">
   <img alt="Claude Code plugin" src="https://img.shields.io/badge/Claude%20Code-plugin-1D9E75">
   <img alt="Python standard library only" src="https://img.shields.io/badge/python-stdlib%20only-378ADD">
   <img alt="offline" src="https://img.shields.io/badge/memory-stays%20on%20your%20PC-888780">
@@ -28,19 +28,25 @@ You ask *"why did we pick resumable uploads for Tidepool?"*. Before Claude reads
 graph the pictures here are made from; real ones look the same):
 
 ```text
-Tidepool --[decided]--> Resumable uploads   (session:654a0668-…)
-Resumable uploads --[because]--> Upload timeouts   (session:654a0668-…)
-Upload timeouts --[fixed_by]--> Resumable uploads   (session:654a0668-…)
-Tidepool --[decided]--> Server-side rendering   (session:9c090f94-…)
-Tidepool --[uses]--> Postgres   (session:9c090f94-…)
+graphcraft-memory (linked to this message; may be out of date, files win):
+Tidepool --[decided]--> Resumable uploads   (s:654a0668)
+Resumable uploads --[because]--> Upload timeouts   (s:654a0668)
+Upload timeouts --[fixed_by]--> Resumable uploads   (s:654a0668)
+Tidepool --[decided]--> Server-side rendering   (s:9c090f94)
+Tidepool --[uses]--> Postgres   (s:9c090f94)
 …
-
 where:
   Resumable uploads: Uploads go in 5 MB chunks that can resume.
   Upload timeouts: Large photos hit the 30 s request limit.
 ```
 
 Every fact says which session (or mod) it came from, so it can be traced and taken back out.
+
+**What it costs.** About 350–450 tokens on a message that names something you have worked on, nothing on one that
+does not ("yes, release it"). Facts already given earlier in the session are not sent again (they are still in the
+conversation), so follow-up messages cost much less: on eight typical messages in one session, about 2,000 tokens in
+all. The two tools add about 1,100 tokens to each request (cached). Learning runs as a separate small-model call, not
+in your conversation, and the pane, map and settings cost no tokens at all.
 
 ## How it works
 

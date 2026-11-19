@@ -53,7 +53,12 @@ file again changes nothing, so two PCs can swap files back and forth.
 2. **Walk:** recursive query, 2 hops by default (3 when the seeds are few), skipping retired relations.
 3. **Rank and trim:** nearest first, current project before global, hub nodes (very many links) damped so one busy
    node cannot crowd out the rest. Budget about 400 tokens.
-4. **Inject:** plain lines `A --[predicate]--> B (origin)` plus short descriptions, as `additionalContext`.
+4. **Inject:** plain lines `A --[predicate]--> B (s:<first 8 of the session id>)` plus short descriptions, as
+   `additionalContext`. A short tag is enough to trace a fact (`/graph-memory-undo` takes an id's first characters);
+   the full id cost ~25 tokens a line. Within one session (and round: the hook passes `<session>.<n>` and starts a new
+   round after a compaction, or a rewind, seen as the conversation getting shorter),
+   facts and descriptions already given are left out, since they are still in the conversation; a closing line says
+   how many still apply. The pane still lists them, marked `again`. The list lives in `<data>/sent/`, kept 3 days.
    One-line summary shown to the user ("memory: 9 facts, 4 ms").
 
 Later: a meaning-based seed (local embeddings) for prompts that name nothing exactly ("that thing from yesterday").
