@@ -73,12 +73,28 @@ class ClawdTest(unittest.TestCase):
         self.install_pet(counts=(("Thinking", 2),))
         self.assertEqual(clawd.build()["source"], "own")
 
-    def test_lit_bubble_builds_the_graph_and_idle_rests(self):
-        lit, idle = clawd.bubble(True), clawd.bubble(False)
-        self.assertEqual(lit.count("stroke-dashoffset"), 2 * len(clawd.LINKS))  # each link draws itself in
-        self.assertIn("<animateMotion", lit)  # the pulse walking the links
-        self.assertIn("stroke-dasharray=\"2 2.5\"", idle)  # resting links, dashed
-        self.assertNotIn("stroke-dashoffset", idle)
+    def test_lit_bubble_builds_the_graph_step_by_step(self):
+        frames = clawd.bubble_frames(True)
+        nodes = [sum(row.count("n") for row in f) // 3 for f in frames]  # a lit node is 3 "n" and 1 "h"
+        built = nodes[:nodes.index(4) + 1]
+        self.assertEqual(built[0], 0)
+        self.assertEqual(built, sorted(built))  # nodes only appear while it builds
+        self.assertTrue(any("p" in "".join(map("".join, f)) for f in frames[2:4]))  # the growing link's bright tip
+        self.assertTrue(all("d" in "".join(map("".join, f)) for f in frames[-2:]))  # it dims before starting over
+
+    def test_idle_bubble_twinkles_each_node_in_turn(self):
+        frames = clawd.bubble_frames(False)
+        lit_nodes = [next(i for i, (x, y) in enumerate(clawd.NODES) if f[y][x] == "g") for f in frames]
+        self.assertEqual(sorted(set(lit_nodes)), list(range(len(clawd.NODES))))
+
+    def test_frames_share_one_grid_and_loop_at_a_steady_step(self):
+        for lit in (True, False):
+            frames = clawd.bubble_frames(lit)
+            self.assertEqual({(len(f), len(f[0])) for f in frames}, {(clawd.BH, clawd.BW)})
+            svg = clawd.bubble(lit)
+            self.assertIn(f'dur="{len(frames) * clawd.STEP_MS / 1000:.2f}s"', svg)
+            self.assertEqual(svg.count("<g visibility="), len(frames))
+            self.assertIn('shape-rendering="crispEdges"', svg)
 
     def test_every_animation_has_valid_key_times(self):
         # A browser ignores an animation whose keyTimes do not start at 0, go backwards, or (unless discrete) end

@@ -2,14 +2,17 @@ r"""Clawd for the Memory pane: Clawd thinking, with a memory bubble that builds 
 
     py -I clawd.py svg       {"lit": {"svg", "width", "height"}, "idle": {...}, "source": "clawd-pet 0.29.5" | "own"}
 
-- lit (facts were recalled for the last prompt): Clawd ponders while, in the bubble, nodes pop in one by one, links
-  draw between them and a pulse walks along the links, as recall walks the graph; then it all glows, fades, repeats.
-- idle: Clawd looks around; the bubble rests dim, its nodes twinkle, and specks rise from his head into it.
+- lit (facts were recalled for the last prompt): Clawd ponders while, in the bubble, nodes appear one by one and links
+  grow between them with a bright tip, as recall walks the graph; then it glows twice, dims and starts over.
+- idle: Clawd looks around; the bubble rests dim and dotted, its nodes twinkle in turn, and a speck rises into it.
+
+The bubble (and the stand-in Clawd) is pixel art: a small grid, a few frames, swapped every 160 ms in a plain loop, the
+way zonecraft's crab scenes are drawn.
 
 Clawd himself comes from the clawd-pet mod's frames when that mod is installed (Anthropic's artwork, which that mod's
 NOTICE keeps outside its license). They are read from the user's own install at run time and never copied into this
 repo; only PNG files are read, no code of the other mod runs (CLAUDE.md rule 4). Without it, a small Clawd drawn here
-stands in. Everything animates with SMIL (no script), so the pane's sandboxed Svg plays it.
+stands in. Frames swap with SMIL (no script), so the pane's sandboxed Svg plays them.
 """
 import base64
 import json
@@ -30,9 +33,6 @@ VIEW = (32, 0, 186, 128)
 BUBBLE_AT = (104, 0)
 
 BODY, SHADE, EYE = "#D97757", "#BF694D", "#000000"
-INK, NODE, LINK, PULSE = "#9A9893", "#D97757", "#E3B79C", "#FFF3C4"
-EASE = 'calcMode="spline" keySplines="0.45 0 0.55 1;0.45 0 0.55 1"'
-LOOP = 3.6  # seconds, the bubble's lit cycle
 
 
 def frames_root() -> Path | None:
@@ -73,102 +73,191 @@ def pet_layer(pngs: list) -> str:
             f'<g clip-path="url(#clawd)" style="image-rendering:pixelated">{"".join(parts)}</g>')
 
 
-# The stand-in Clawd: 12 x 8 cells of 8 frame pixels, where the pet's Clawd stands. x body, s shaded, a arm, l leg.
-OWN = ["..xxxxxxxx..", "..xxxxxxxx..", "aaxxxxxxxxaa", "aaxxxxxxxxaa",
-       "..xxxxxxxx..", "..ssssssss..", "..l.l..l.l..", "..l.l..l.l.."]
+# ---- Pixel frames, looped (the zonecraft way: a small grid, a few steps, swapped every STEP_MS) ----
 
+STEP_MS = 160
+CELL = 4  # frame pixels per bubble pixel: twice as fine as Clawd's own, so a graph fits in the bubble
+BW, BH = 20, 16  # the bubble's grid
 
-def own_layer(lit: bool) -> str:
-    cell, x0, y0 = 8, CLAWD[0], 64
-    rects = [f'<rect x="{x0 + x * cell}" y="{y0 + y * cell}" width="{cell}" height="{cell}"'
-             f' fill="{SHADE if c in "sl" else BODY}"/>'
-             for y, row in enumerate(OWN) for x, c in enumerate(row) if c != "."]
-    blink = ('<animate attributeName="height" values="8;8;1;8;8" keyTimes="0;0.9;0.92;0.95;1" dur="5s"'
-             ' repeatCount="indefinite"/>')
-    if lit:  # eyes on the bubble
-        look = '<animateTransform attributeName="transform" type="translate" values="4 -2" dur="1s" fill="freeze"/>'
-    else:  # glance right, back, left, back
-        look = ('<animateTransform attributeName="transform" type="translate" values="0 0;0 0;6 0;6 0;0 0;0 0;-6 0;-6 0;0 0"'
-                ' keyTimes="0;0.15;0.2;0.38;0.43;0.58;0.63;0.8;0.85" calcMode="discrete" dur="5s" repeatCount="indefinite"/>')
-    eyes = "".join(f'<rect x="{x0 + c * cell}" y="{y0 + cell}" width="{cell}" height="{cell}" fill="{EYE}">{blink}</rect>'
-                   for c in (3, 8))
-    breathe = (f'<animateTransform attributeName="transform" type="translate" values="0 0;0 -3;0 0" keyTimes="0;0.5;1"'
-               f' dur="2.4s" repeatCount="indefinite" {EASE}/>')
-    return f'<g shape-rendering="crispEdges">{breathe}{"".join(rects)}<g>{look}{eyes}</g></g>'
+# One character per pixel; "." is empty. Colors with an opacity, so the bubble reads on light and dark panes.
+COLORS = {
+    "o": ("#9A9893", 1), "f": ("#9A9893", 0.14),            # cloud outline, cloud fill
+    "n": ("#D97757", 1), "h": ("#F2C9A8", 1),               # node, node highlight
+    "l": ("#E3B79C", 1), "p": ("#FFF3C4", 1),               # link, pulse and glow
+    "d": ("#8A8883", 0.75), "e": ("#8A8883", 0.45),         # dim node, dim link
+    "g": ("#C9C6BF", 1),                                    # twinkle
+    "x": (BODY, 1), "s": (SHADE, 1), "k": (EYE, 1),         # the stand-in Clawd
+}
 
-
-# The bubble, in its own 82 x 64 space: a cloud, two puffs leading down to Clawd's head, and a four-node graph.
-NODES = [(26, 32), (40, 14), (62, 20), (54, 40)]
+NODES = [(4, 6), (8, 2), (14, 3), (11, 7)]  # top-left of each 2 x 2 node, in bubble pixels
 LINKS = [(0, 1), (1, 2), (2, 3)]
+PUFFS = [((3, 12), 2), ((1, 14), 1)]  # little circles leading down to Clawd's head: (top-left, size)
 
 
-def _t(x: float) -> str:
-    return f"{x:.3f}".rstrip("0").rstrip(".") or "0"
+def _grid(w, h):
+    return [["."] * w for _ in range(h)]
 
 
-def bubble(lit: bool) -> str:
-    cloud = (f'<ellipse cx="44" cy="27" rx="35" ry="23" fill="{INK}" fill-opacity="0.12" stroke="{INK}"'
-             f' stroke-width="1.6"/><circle cx="11" cy="53" r="4" fill="{INK}" fill-opacity="0.12" stroke="{INK}"'
-             f' stroke-width="1.4"/><circle cx="3.5" cy="60" r="2.4" fill="{INK}" fill-opacity="0.12" stroke="{INK}"'
-             f' stroke-width="1.2"/>')
-    if not lit:
-        return cloud + _idle_graph()
-    return cloud + _lit_graph()
+def _line(a, b):
+    """Bresenham from a to b, both ends included."""
+    (x0, y0), (x1, y1) = a, b
+    dx, dy, sx, sy = abs(x1 - x0), -abs(y1 - y0), 1 if x1 > x0 else -1, 1 if y1 > y0 else -1
+    err, out = dx + dy, []
+    while True:
+        out.append((x0, y0))
+        if (x0, y0) == (x1, y1):
+            return out
+        e2 = 2 * err
+        if e2 >= dy:
+            err += dy
+            x0 += sx
+        if e2 <= dx:
+            err += dx
+            y0 += sy
 
 
-def _idle_graph() -> str:
+def _center(i):
+    x, y = NODES[i]
+    return x + 1, y + 1
+
+
+def _cloud(f):
+    cx, cy, rx, ry = 10, 5.5, 9.2, 5.6
+
+    def inside(x, y):
+        return ((x + 0.5 - cx) / rx) ** 2 + ((y + 0.5 - cy) / ry) ** 2 <= 1
+    for y in range(BH):
+        for x in range(BW):
+            if inside(x, y):
+                edge = not all(inside(x + dx, y + dy) for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)))
+                f[y][x] = "o" if edge else "f"
+    for (x, y), size in PUFFS:
+        for yy in range(y, y + size):
+            for xx in range(x, x + size):
+                f[yy][xx] = "o"
+
+
+def _node(f, i, body="n", shine="h"):
+    x, y = NODES[i]
+    f[y][x], f[y][x + 1], f[y + 1][x], f[y + 1][x + 1] = shine, body, body, body
+
+
+def _link(f, k, part=1.0, color="l", dotted=False, tip=None):
+    a, b = LINKS[k]
+    pts = _line(_center(a), _center(b))
+    shown = pts[:max(1, round(len(pts) * part))]
+    for j, (x, y) in enumerate(shown):
+        if not dotted or j % 2 == 0:
+            f[y][x] = color
+    if tip:
+        x, y = shown[-1]
+        f[y][x] = tip
+
+
+def bubble_frames(lit: bool) -> list:
+    """The bubble's loop. lit: the graph builds node by node, a pulse at each link's growing tip; it glows twice,
+    dims and starts over. idle: a dim, dotted graph whose nodes twinkle in turn while a speck rises into it."""
     out = []
-    for a, b in LINKS:
-        (x1, y1), (x2, y2) = NODES[a], NODES[b]
-        out.append(f'<line x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}" stroke="{INK}" stroke-width="1.2"'
-                   f' stroke-dasharray="2 2.5" opacity="0.45"/>')
-    for i, (x, y) in enumerate(NODES):
-        out.append(f'<circle cx="{x}" cy="{y}" r="3" fill="{INK}" opacity="0.4">'
-                   f'<animate attributeName="opacity" values="0.3;0.85;0.3" keyTimes="0;0.5;1" dur="3.2s"'
-                   f' begin="{i * 0.8:.1f}s" repeatCount="indefinite" {EASE}/></circle>')
-    # Specks rise from Clawd's head into the bubble, one after another: memories forming.
-    for i in range(3):
-        out.append(f'<circle r="1.6" fill="{NODE}" opacity="0">'
-                   f'<animateMotion path="M2 64 Q8 50 20 40" dur="3s" begin="{i:.0f}s" repeatCount="indefinite"/>'
-                   f'<animate attributeName="opacity" values="0;0.9;0" keyTimes="0;0.3;1" dur="3s" begin="{i:.0f}s"'
-                   f' repeatCount="indefinite"/></circle>')
+    if lit:
+        steps = [((), {}), ((0,), {})]
+        for k in range(3):
+            done = {j: 1.0 for j in range(k)}
+            seen = tuple(range(k + 1))
+            steps += [(seen, {**done, k: 1 / 3}), (seen, {**done, k: 2 / 3}), (seen + (k + 1,), {**done, k: 1.0})]
+        whole = ((0, 1, 2, 3), {0: 1.0, 1: 1.0, 2: 1.0})
+        steps += [whole + ("glow",), whole, whole + ("glow",), whole, whole + ("dim",), whole + ("dim",)]
+        for step in steps:
+            nodes, links, *mode = step
+            f = _grid(BW, BH)
+            _cloud(f)
+            for k, part in links.items():
+                growing = part < 1
+                color = "e" if mode == ["dim"] else "p" if mode == ["glow"] else "l"
+                _link(f, k, part, color, tip="p" if growing else None)
+            for i in nodes:
+                if mode == ["dim"]:
+                    _node(f, i, "d", "d")
+                elif mode == ["glow"]:
+                    _node(f, i, "p", "p")
+                else:
+                    _node(f, i)
+            out.append(f)
+        return out
+    rise = [(1, 13), (3, 11), (5, 10), None, None, None, None, None]
+    for t in range(8):
+        f = _grid(BW, BH)
+        _cloud(f)
+        for k in range(len(LINKS)):
+            _link(f, k, color="e", dotted=True)
+        for i in range(len(NODES)):
+            _node(f, i, "g", "g") if i == t // 2 else _node(f, i, "d", "d")
+        if rise[t]:
+            x, y = rise[t]
+            f[y][x] = "n"
+        out.append(f)
+    return out
+
+
+# The stand-in Clawd: 12 x 8 pixels of 8 frame pixels each, where the pet's Clawd stands.
+OWN = ["..xxxxxxxx..", "..xxxxxxxx..", "xxxxxxxxxxxx", "xxxxxxxxxxxx",
+       "..xxxxxxxx..", "..ssssssss..", "..s.s..s.s..", "..s.s..s.s.."]
+
+
+def own_frames(lit: bool) -> list:
+    """lit: eyes on the bubble, one blink. idle: looks ahead, right, ahead, left, blinks."""
+    looks = [1, 1, 1, 1, 1, 1, 1, None] if lit else [0, 0, 0, 1, 1, 0, -1, None]
+    out = []
+    for look in looks:
+        f = [list(row) for row in OWN]
+        if look is not None:
+            for x in (3, 8):
+                f[1][x + look] = "k"
+        out.append(f)
+    return out
+
+
+def _runs(f, keep, ox, oy, cell):
+    """Horizontal runs of one color as rects; keep(x, y) picks the pixels drawn."""
+    out = []
+    for y, row in enumerate(f):
+        x = 0
+        while x < len(row):
+            c = row[x]
+            if c == "." or not keep(x, y):
+                x += 1
+                continue
+            end = x + 1
+            while end < len(row) and row[end] == c and keep(end, y):
+                end += 1
+            color, alpha = COLORS[c]
+            out.append(f'<rect x="{ox + x * cell}" y="{oy + y * cell}" width="{(end - x) * cell}" height="{cell}"'
+                       f' fill="{color}"{"" if alpha == 1 else f" fill-opacity={chr(34)}{alpha}{chr(34)}"}/>')
+            x = end
     return "".join(out)
 
 
-def _lit_graph() -> str:
-    # One loop: node 0 pops, then each link draws and its far node pops, a pulse riding along; at 0.78 everything
-    # glows, at 0.9 it fades, and the loop starts over.
-    pops = [0.04, 0.27, 0.47, 0.67]
-    draws = [(0.1, 0.26), (0.3, 0.46), (0.5, 0.66)]
-    glow, fade = 0.78, 0.9
-    common = f'dur="{LOOP}s" repeatCount="indefinite"'
-    out = []
-    for (a, b), (s, e) in zip(LINKS, draws):
-        (x1, y1), (x2, y2) = NODES[a], NODES[b]
-        out.append(f'<line x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}" stroke="{LINK}" stroke-width="1.6"'
-                   f' stroke-linecap="round" pathLength="1" stroke-dasharray="1" stroke-dashoffset="1">'
-                   f'<animate attributeName="stroke-dashoffset" values="1;1;0;0" keyTimes="0;{_t(s)};{_t(e)};1"'
-                   f' {common}/></line>')
-    for (x, y), p in zip(NODES, pops):
-        r = (f'<animate attributeName="r" values="0;0;4.2;3.2;3.2;3.9;3.2" keyTimes="0;{_t(p)};{_t(p + 0.05)};'
-             f'{_t(p + 0.09)};{_t(glow)};{_t(glow + 0.05)};1" {common}/>')
-        out.append(f'<circle cx="{x}" cy="{y}" r="6" fill="{NODE}" opacity="0">'  # the glow halo
-                   f'<animate attributeName="opacity" values="0;0;0.35;0;0" keyTimes="0;{_t(glow)};{_t(glow + 0.05)};'
-                   f'{_t(fade)};1" {common}/></circle>'
-                   f'<circle cx="{x}" cy="{y}" r="0" fill="{NODE}">{r}</circle>'
-                   f'<circle cx="{x - 0.9}" cy="{y - 0.9}" r="0.9" fill="{PULSE}" opacity="0">'
-                   f'<animate attributeName="opacity" values="0;0;0.9;0.9" keyTimes="0;{_t(p + 0.06)};'
-                   f'{_t(p + 0.09)};1" {common}/></circle>')
-    path = "M" + " L".join(f"{x} {y}" for x, y in NODES)
-    out.append(f'<circle r="2" fill="{PULSE}" opacity="0">'
-               f'<animateMotion path="{path}" keyPoints="0;0;0.333;0.333;0.667;0.667;1;1"'
-               f' keyTimes="0;{_t(draws[0][0])};{_t(draws[0][1])};{_t(draws[1][0])};{_t(draws[1][1])};{_t(draws[2][0])};'
-               f'{_t(draws[2][1])};1" calcMode="linear" {common}/>'
-               f'<animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;{_t(draws[0][0])};'
-               f'{_t(draws[0][0] + 0.02)};{_t(draws[2][1])};{_t(draws[2][1] + 0.03)};1" {common}/></circle>')
-    # The whole graph fades out at the end of the loop, then builds again.
-    return (f'<g><animate attributeName="opacity" values="1;1;0;0" keyTimes="0;{_t(fade)};{_t(fade + 0.07)};1"'
-            f' {common}/>{"".join(out)}</g>')
+def loop_layer(frames_: list, ox: int, oy: int, cell: int) -> str:
+    """The pixels every frame shares drawn once; each frame's own pixels in a group shown in its turn."""
+    n = len(frames_)
+    dur = f"{n * STEP_MS / 1000:.2f}s"
+
+    def same(x, y):
+        return all(f[y][x] == frames_[0][y][x] for f in frames_)
+    body = _runs(frames_[0], same, ox, oy, cell)
+    for k, f in enumerate(frames_):
+        values = ";".join("visible" if i == k else "hidden" for i in range(n))
+        body += (f'<g visibility="{"visible" if k == 0 else "hidden"}"><animate attributeName="visibility"'
+                 f' values="{values}" dur="{dur}" calcMode="discrete" repeatCount="indefinite"/>'
+                 f'{_runs(f, lambda x, y: not same(x, y), ox, oy, cell)}</g>')
+    return f'<g shape-rendering="crispEdges">{body}</g>'
+
+
+def own_layer(lit: bool) -> str:
+    return loop_layer(own_frames(lit), CLAWD[0], 64, 8)
+
+
+def bubble(lit: bool) -> str:
+    return loop_layer(bubble_frames(lit), 0, 0, CELL)
 
 
 def compose(clawd_layer: str, lit: bool) -> dict:
