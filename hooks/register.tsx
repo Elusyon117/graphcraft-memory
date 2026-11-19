@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface as Engine, Register } from 'claude-code'
 
-import type { Clawd, Fixing, PaneFact, PaneView, Searched, Used } from '../types'
+import type { Clawd, Dupes, DupePair, Fixing, PaneFact, PaneView, Searched, Used } from '../types'
 
 // graphcraft-memory, the mod side. Python (graph/) owns the graph; this module only decides when things run:
 // - prompt.submit: recall the facts linked to the prompt and attach them as context (never blocks a prompt); recall
@@ -12,6 +12,8 @@ import type { Clawd, Fixing, PaneFact, PaneView, Searched, Used } from '../types
 // - session.start: read other mods' feeder files (graph/feeders.py), then extract queued conversations in the
 //   background with a small model, and tell the user
 // - /graph-memory, /graph-memory-undo, /graph-view: see what was learned, take a session back out, open the map
+// - /graph-merge (and Duplicates in the pane): join a node saved twice under two names, or mark the pair distinct;
+//   graph/dupes.py suggests, the person decides, Undo puts it back
 // - /graph-rename (and Rename in the pane): give a session your own name; a later capture never replaces it
 // - /graph-export, /graph-import: carry memory to another PC as one file; import merges (graph/sync.py)
 // - the Memory pane (/graph-pane): search memory, facts used for the prompt, facts learned last session, open
@@ -43,6 +45,9 @@ const renaming = atom({ plugin: 'graphcraft-memory', key: 'renaming' } as const,
 const searched = atom({ plugin: 'graphcraft-memory', key: 'searched' } as const, null as Searched | null, { shape: 'searched-1' })
 const fixing = atom({ plugin: 'graphcraft-memory', key: 'fixing' } as const, null as Fixing | null, { shape: 'fixing-1' })
 const SHOW_SEARCH = 6
+// Nodes likely saved twice under two names (graph/dupes.py), for the pane's Duplicates section.
+const dupes = atom({ plugin: 'graphcraft-memory', key: 'dupes' } as const, null as Dupes | null, { shape: 'dupes-1' })
+const SHOW_DUPES = 3
 
 // The warm recall process (graph/serve.py): its port and this session's token once it has said its port.
 let warm: { port: number; token: string } | undefined
@@ -402,6 +407,40 @@ async function relinkFact($: Engine, f: PaneFact, link: string): Promise<void> {
   await refreshView($)
 }
 
+const dupeKey = (p: DupePair) => `${p.from.id}|${p.into.id}`
+
+/** Re-reads the likely duplicates; keeps the last merge so its Undo stays. */
+async function loadDupes($: Engine): Promise<void> {
+  const out = await runPy($, 'dupes.py', ['suggest', '--limit', '10'], CAPTURE_TIMEOUT_MS)
+  if (!Array.isArray(out?.pairs)) return
+  await update($, dupes, d => ({ pairs: out.pairs as DupePair[], last: d?.last ?? null }))
+}
+
+/** Joins one pair the way dupes.py suggested; the reply line for the person. */
+async function mergeNodes($: Engine, from: string, into: string): Promise<string> {
+  const out = await runPy($, 'dupes.py', ['merge', from, into], CAPTURE_TIMEOUT_MS)
+  if (!out || typeof out.merged !== 'string') return `Not merged (${String(out?.error ?? 'memory could not be reached')}).`
+  const text = `Merged "${out.merged}" into "${String(out.into)}" (${plural(Number(out.facts ?? 0), 'fact')} moved).`
+  await update($, dupes, d => ({ pairs: d?.pairs ?? [], last: { merge: Number(out.merge), text } }))
+  await loadDupes($)
+  await refreshView($)
+  return text
+}
+
+async function undoMerge($: Engine, which = 'last'): Promise<string> {
+  const out = await runPy($, 'dupes.py', ['undo', which], CAPTURE_TIMEOUT_MS)
+  if (!out || out.undone === undefined) return `Nothing undone (${String(out?.error ?? 'memory could not be reached')}).`
+  await update($, dupes, d => ({ pairs: d?.pairs ?? [], last: null }))
+  await loadDupes($)
+  await refreshView($)
+  return `Undone: "${String(out.restored)}" is its own node again.`
+}
+
+async function markDistinct($: Engine, p: DupePair): Promise<void> {
+  await runPy($, 'dupes.py', ['distinct', p.from.id, p.into.id], CAPTURE_TIMEOUT_MS)
+  await update($, dupes, d => (d ? { ...d, pairs: d.pairs.filter(x => dupeKey(x) !== dupeKey(p)) } : d))
+}
+
 /** A correction only Claude can make (a wrong name, a fact that should be two): a turn, as if the person typed it. */
 async function tellClaude($: Engine, f: PaneFact, truth: string): Promise<void> {
   await update($, fixing, () => null)
@@ -496,6 +535,10 @@ export const register: Register = (on, options) => {
       name: 'graph-rename',
       description: 'graphcraft-memory: name a session: /graph-rename <session id or last> <name>',
     })
+    await $.command.register({
+      name: 'graph-merge',
+      description: 'graphcraft-memory: list likely duplicate nodes, or /graph-merge <name> into <name>, or /graph-merge undo',
+    })
     await $.tool.register({
       name: 'memory_search',
       description:
@@ -547,6 +590,8 @@ export const register: Register = (on, options) => {
       const merged = await runPy($, 'store.py', ['merge'], CAPTURE_TIMEOUT_MS)
       if (Array.isArray(merged?.merged) && merged.merged.length > 0)
         $.ui.log(`graphcraft-memory: joined duplicate nodes: ${(merged.merged as string[]).join(', ')}`, { to: 'debug' })
+      // Names that differ but likely mean one thing: offered in the pane, joined only when the person says so.
+      await loadDupes($)
     })().catch(err => $.ui.log(`graphcraft-memory: session start: ${String(err).slice(0, 200)}`, { to: 'debug' }))
     return started
   })
@@ -584,6 +629,7 @@ export const register: Register = (on, options) => {
   on('command.run', { command: 'graph-pane' }, async $ => {
     await $.store.delete('paneClosed')
     await refreshView($)
+    await loadDupes($)
     const opened = await $.ui.open({ id: PANE, title: 'Memory', rows: PANE_ROWS })
     return {
       text: opened.isPlaced
@@ -621,6 +667,7 @@ export const register: Register = (on, options) => {
       const isRenaming = await read($, renaming)
       const found = await read($, searched)
       const fix = await read($, fixing)
+      const dup = await read($, dupes)
       // Desktop draws each section as a card; the terminal has few rows, so there sections are plain.
       const isDesktop = 'Svg' in el
       const card = isDesktop ? ({ borderStyle: 'round', borderColor: 'subtle', paddingX: 'md', paddingY: 'sm' } as const) : {}
@@ -841,6 +888,41 @@ export const register: Register = (on, options) => {
                 ))}
               </Box>,
             )}
+
+          {dup &&
+            (dup.pairs.length > 0 || dup.last) &&
+            section(
+              'Duplicates',
+              dup.pairs.length > 0 ? plural(dup.pairs.length, 'likely pair') : '',
+              <Box flexDirection="column" rowGap="sm">
+                {dup.last && (
+                  <Box flexDirection="row" justifyContent="space-between" alignItems="center" columnGap="md">
+                    <Text wrap="wrap" color="success" size="footnote">{dup.last.text}</Text>
+                    <Button key="merge-undo" label="Undo" variant="secondary"
+                      onPress={() => void undoMerge($, String(dup.last!.merge)).then(t => $.ui.toast(`memory: ${t}`))} />
+                  </Box>
+                )}
+                {dup.pairs.length > 0 && note('One thing saved under two names? Merge keeps every fact and its source.')}
+                {dup.pairs.slice(0, SHOW_DUPES).map(p => (
+                  <Box key={`d:${dupeKey(p)}`} flexDirection="row" justifyContent="space-between" alignItems="center" columnGap="md">
+                    <Box flexDirection="column" flexShrink={1}>
+                      <Text wrap="wrap">
+                        <Text weight="medium">{p.from.name}</Text>
+                        <Text dimColor size="footnote">{'  into  '}</Text>
+                        <Text weight="medium">{p.into.name}</Text>
+                      </Text>
+                      {note(`${p.from.type.toLowerCase()}, ${plural(p.from.facts, 'fact')} → ${p.into.type.toLowerCase()}, ${plural(p.into.facts, 'fact')}`)}
+                    </Box>
+                    <Box flexDirection="row" columnGap="xs" flexShrink={0}>
+                      <Button key={`merge:${dupeKey(p)}`} label="Merge" variant="secondary"
+                        onPress={() => void mergeNodes($, p.from.id, p.into.id).then(t => $.ui.toast(`memory: ${t}`))} />
+                      <Button key={`distinct:${dupeKey(p)}`} label="Not the same" variant="secondary" onPress={() => void markDistinct($, p)} />
+                    </Box>
+                  </Box>
+                ))}
+                {dup.pairs.length > SHOW_DUPES && note(`+${dup.pairs.length - SHOW_DUPES} more · /graph-merge lists them all`)}
+              </Box>,
+            )}
         </Box>
       )
     } catch (err) {
@@ -894,6 +976,22 @@ export const register: Register = (on, options) => {
       text: out.opened
         ? `Map opened in your browser (${counts}).\nFile: ${where}`
         : `Map written (${counts}). Open it in your browser: ${String(out.url)}`,
+    }
+  })
+
+  on('command.run', { command: 'graph-merge' }, async ($, e) => {
+    const args = e.args.trim()
+    if (/^undo\b/i.test(args)) return { text: await undoMerge($, args.slice(4).trim() || 'last') }
+    const m = /^(.+?)\s+(?:into|->|→)\s+(.+)$/i.exec(args)
+    if (m) return { text: await mergeNodes($, pathArg(m[1]), pathArg(m[2])) }
+    if (args) return { text: 'Usage: /graph-merge (list) · /graph-merge <name> into <name> · /graph-merge undo [id]' }
+    await loadDupes($)
+    const pairs = (await read($, dupes))?.pairs ?? []
+    if (pairs.length === 0) return { text: 'No likely duplicates in memory.' }
+    return {
+      text: ['Likely duplicates (first name would merge into the second):',
+        ...pairs.map(p => `- ${p.from.name} (${p.from.type.toLowerCase()}) into ${p.into.name} (${p.into.type.toLowerCase()})`),
+        'Merge one with /graph-merge <name> into <name>, or in the Memory pane.'].join('\n'),
     }
   })
 

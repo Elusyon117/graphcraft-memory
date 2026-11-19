@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <img alt="version" src="https://img.shields.io/badge/version-0.14.0-7F77DD">
+  <img alt="version" src="https://img.shields.io/badge/version-0.15.0-7F77DD">
   <img alt="Claude Code plugin" src="https://img.shields.io/badge/Claude%20Code-plugin-1D9E75">
   <img alt="Python standard library only" src="https://img.shields.io/badge/python-stdlib%20only-378ADD">
   <img alt="offline" src="https://img.shields.io/badge/memory-stays%20on%20your%20PC-888780">
@@ -147,6 +147,7 @@ Update later with `claude plugin marketplace update elusyon-graphcraft-memory`, 
 | `/graph-memory` | What is remembered, and recent captures. |
 | `/graph-memory-undo [session id]` | Take a session's facts back out (default: the last one). |
 | `/graph-rename <session id or last> <name>` | Give a session your own name; later captures keep it. |
+| `/graph-merge [<name> into <name> | undo]` | List nodes likely saved twice under two names, join one pair, or undo the last join (also in the pane's Duplicates section). |
 | `/graph-export` | Save all memory to one file in Downloads. |
 | `/graph-import <file>` | Merge an export on another PC (a copy of the graph is kept first; importing twice changes nothing). |
 

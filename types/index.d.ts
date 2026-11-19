@@ -20,6 +20,12 @@ export type Searched = { query: string; facts: PaneFact[]; more: number }
 /** The fact whose Fix box is open, and the links the vocabulary allows between its two nodes ("~p": reversed). */
 export type Fixing = { key: string; links: { value: string; label: string }[] }
 
+/** graph/dupes.py suggest: one node likely saved twice under two names, and the way round it would merge. */
+export type DupeNode = { id: string; name: string; type: string; facts: number }
+export type DupePair = { score: number; from: DupeNode; into: DupeNode }
+/** The pane's Duplicates section: the pairs to review, and the last merge (for Undo). */
+export type Dupes = { pairs: DupePair[]; last: { merge: number; text: string } | null }
+
 /** graph/clawd.py svg: Clawd from the clawd-pet mod's frames, when that mod is installed. */
 export type ClawdArt = { svg: string; width: number; height: number }
 export type Clawd = { lit: ClawdArt; idle: ClawdArt; source: string }
@@ -34,6 +40,7 @@ declare module 'claude-code' {
       renaming: Shaped<boolean>
       searched: Shaped<Searched | null>
       fixing: Shaped<Fixing | null>
+      dupes: Shaped<Dupes | null>
     }
   }
 }

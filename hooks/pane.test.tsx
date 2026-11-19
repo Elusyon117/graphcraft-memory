@@ -35,7 +35,14 @@ const PANE = {
   },
 } as const
 
+const PAIR = {
+  score: 0.45,
+  from: { id: 'n1', name: 'warm recall', type: 'CONCEPT', facts: 1 },
+  into: { id: 'n2', name: 'Warm recall process', type: 'DECISION', facts: 2 },
+}
+
 function engine(on: Parameters<Parameters<typeof test>[1]>[1], calls: string[][], kept?: Map<string, unknown>) {
+  let merged = false
   on('command.register', () => ({ value: undefined }))
   on('tool.register', (_, e) => ({ value: { tool: `mcp__graphcraft-memory__${e.name}` } }))
   on('session.id', () => ({ value: 'sess-1' }))
@@ -76,6 +83,10 @@ function engine(on: Parameters<Parameters<typeof test>[1]>[1], calls: string[][]
       : argv.includes('tools.py remember') ? { facts: 1, nodes: 2, retired: 0, dropped: ["edge 'X' (TOOL) 'about' 'Y'"] }
       : argv.includes('sync.py export') ? { exported: 'C:\\Users\\me\\Downloads\\graphcraft-memory-2026-11-19.json', nodes: 74, facts: 82, sources: 6 }
       : argv.includes('sync.py import') ? { imported: e.argv[e.argv.length - 1], backup: 'C:/x/graph.before-import.db', nodes: 3, facts: 5, sources: 1, retired: 1 }
+      : argv.includes('dupes.py suggest') ? { pairs: merged ? [] : [PAIR] }
+      : argv.includes('dupes.py merge') ? ((merged = true), { merged: 'warm recall', into: 'Warm recall process', facts: 1, merge: 7 })
+      : argv.includes('dupes.py undo') ? ((merged = false), { undone: 7, restored: 'warm recall' })
+      : argv.includes('dupes.py distinct') ? { distinct: ['n1', 'n2'] }
       : argv.includes('store.py rename') ? { renamed: 's-1-full-id', title: e.argv[e.argv.length - 1] }
       : argv.includes('pane.py state') ? STATE : argv.includes('pane.py forget') ? { retired: 1 } : { files: [] }
     return {
@@ -379,4 +390,52 @@ test('after a rewind, recall starts a fresh list of what was sent', { options: {
   length = 2 // rewound to an earlier message
   await $.prompt.submit({ text: 'why did Campfires crash?' })
   expect(sessions()).toEqual(['sess-1.0', 'sess-1.0', 'sess-1.1'])
+})
+
+test('Duplicates offers likely pairs; Merge joins them, Undo puts them back', { options: { capture: false } }, async ($, on) => {
+  const calls: string[][] = []
+  engine(on, calls)
+  await $.session.start({ cwd: 'C:/mods/Campfires', surface: 'desktop', isInteractive: true })
+  await new Promise(done => setTimeout(done, 20)) // suggestions load after session start
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ ...PANE, surface })
+    expect((await ui.find({ type: 'Text', text: /warm recall\s+into\s+Warm recall process/ }))?.text).toBeTruthy()
+    await ui.unmount()
+  }
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  await ui.press({ key: 'merge:n1|n2' })
+  expect(calls.find(c => c.join(' ').includes('dupes.py merge'))?.slice(-3)).toEqual(['merge', 'n1', 'n2'])
+  expect((await ui.find({ type: 'Text', text: /Merged "warm recall" into "Warm recall process"/ }))?.text).toBeTruthy()
+  expect(await ui.find({ key: 'merge:n1|n2' })).toBeFalsy()
+  await ui.press({ key: 'merge-undo' })
+  expect(calls.find(c => c.join(' ').includes('dupes.py undo'))?.slice(-2)).toEqual(['undo', '7'])
+  expect(await ui.find({ key: 'merge-undo' })).toBeFalsy()
+  expect(await ui.find({ key: 'merge:n1|n2' })).toBeTruthy() // suggested again
+  await ui.unmount()
+})
+
+test('Not the same hides the pair and records it', { options: { capture: false } }, async ($, on) => {
+  const calls: string[][] = []
+  engine(on, calls)
+  await $.session.start({ cwd: 'C:/mods/Campfires', surface: 'desktop', isInteractive: true })
+  await new Promise(done => setTimeout(done, 20))
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  await ui.press({ key: 'distinct:n1|n2' })
+  expect(calls.find(c => c.join(' ').includes('dupes.py distinct'))?.slice(-2)).toEqual(['n1', 'n2'])
+  expect(await ui.find({ key: 'merge:n1|n2' })).toBeFalsy()
+  await ui.unmount()
+})
+
+test('/graph-merge lists pairs, merges by name, and undoes', { options: { capture: false } }, async ($, on) => {
+  const calls: string[][] = []
+  engine(on, calls)
+  await $.session.start({ cwd: 'C:/mods/Campfires', surface: 'terminal', isInteractive: true })
+  const list = await $.command.run({ command: 'graph-merge', args: '' } as never)
+  expect(list.text).toContain('warm recall (concept) into Warm recall process (decision)')
+  const done = await $.command.run({ command: 'graph-merge', args: '"warm recall" into Warm recall process' } as never)
+  expect(calls.find(c => c.join(' ').includes('dupes.py merge'))?.slice(-2)).toEqual(['warm recall', 'Warm recall process'])
+  expect(done.text).toContain('1 fact moved')
+  expect((await $.command.run({ command: 'graph-merge', args: 'undo' } as never)).text).toContain('own node again')
+  expect(calls.find(c => c.join(' ').includes('dupes.py undo'))?.slice(-1)).toEqual(['last'])
+  expect((await $.command.run({ command: 'graph-merge', args: 'just one name' } as never)).text).toContain('Usage')
 })
