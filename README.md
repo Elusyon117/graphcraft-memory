@@ -63,10 +63,8 @@ The full design is in [docs/DESIGN.md](docs/DESIGN.md).
 
 `/graph-view` opens an offline map of the whole graph in your browser: one HTML file, no network.
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/images/map-structured-dark.png">
-  <img src="docs/images/map-structured.png" alt="Structured map: a column per kind of thing, a band per project, Tidepool's links lit">
-</picture>
+<img src="docs/images/map-structured.png#gh-light-mode-only" alt="Structured map: a column per kind of thing, a band per project, Tidepool's links lit">
+<img src="docs/images/map-structured-dark.png#gh-dark-mode-only" alt="Structured map: a column per kind of thing, a band per project, Tidepool's links lit">
 
 **Structured** puts each kind of thing in its own column and each project in its own band (click a band to fold it).
 Hover a node to light its links, click it for its facts and where they came from.
@@ -74,26 +72,20 @@ Hover a node to light its links, click it for its facts and where they came from
 <table>
 <tr>
 <td width="50%">
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/images/map-find-dark.png">
-  <img src="docs/images/map-find.png" alt="Find: matches stay lit, Enter jumps to each">
-</picture>
+<img src="docs/images/map-find.png#gh-light-mode-only" alt="Find: matches stay lit, Enter jumps to each">
+<img src="docs/images/map-find-dark.png#gh-dark-mode-only" alt="Find: matches stay lit, Enter jumps to each">
 <b>Find</b> keeps matches lit; Enter jumps to the next one. Double-click centres on a node.
 </td>
 <td width="50%">
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/images/map-free-dark.png">
-  <img src="docs/images/map-free.png" alt="Free layout: a force-directed web">
-</picture>
+<img src="docs/images/map-free.png#gh-light-mode-only" alt="Free layout: a force-directed web">
+<img src="docs/images/map-free-dark.png#gh-dark-mode-only" alt="Free layout: a force-directed web">
 <b>Free</b> is a web you can drag apart. <b>Why chains</b> keeps only decisions and their reasons.
 </td>
 </tr>
 </table>
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/images/map-timeline-dark.png">
-  <img src="docs/images/map-timeline.png" alt="Timeline: every session newest first, with what it taught" width="80%">
-</picture>
+<img src="docs/images/map-timeline.png#gh-light-mode-only" alt="Timeline: every session newest first, with what it taught" width="80%">
+<img src="docs/images/map-timeline-dark.png#gh-dark-mode-only" alt="Timeline: every session newest first, with what it taught" width="80%">
 
 The **Timeline** tab lists every session newest first: what it taught, what has been retired since, and "Show on map"
 to light just its facts. Sessions are named for what happened in them; ✎ renames one.
