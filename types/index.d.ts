@@ -14,9 +14,14 @@ export type PaneView = {
   problems: { name: string; fixed: boolean; fixedBy: string }[]
 }
 
+/** graph/clawd.py svg: Clawd from the clawd-pet mod's frames, when that mod is installed. */
+export type ClawdArt = { svg: string; width: number; height: number }
+export type Clawd = { lit: ClawdArt; idle: ClawdArt; source: string }
+
 declare module 'claude-code' {
   interface PluginState {
     'graphcraft-memory': {
+      clawd: Shaped<Clawd | null>
       used: Shaped<Used | null>
       view: Shaped<PaneView | null>
       briefShown: Shaped<boolean>
