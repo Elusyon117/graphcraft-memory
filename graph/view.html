@@ -21,6 +21,9 @@ button.on{background:var(--lane);border-color:var(--text2)}
 .chip.off{opacity:.4}
 .dot{width:9px;height:9px;border-radius:50%;display:inline-block}
 .main{display:grid;grid-template-columns:minmax(0,1fr) 300px;min-height:0}
+.stage{position:relative;min-height:0;overflow:hidden}
+.heads{position:absolute;left:0;right:0;top:0;height:34px;pointer-events:none;background:linear-gradient(var(--bg) 70%,transparent)}
+.heads span{position:absolute;top:8px;text-align:center;font-size:13px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 svg{width:100%;height:100%;display:block;cursor:grab;user-select:none}
 svg.panning{cursor:grabbing}
 .side{border-left:1px solid var(--border);background:var(--panel);padding:14px 16px;overflow:auto;color:var(--text2)}
@@ -77,10 +80,10 @@ code{font-family:ui-monospace,Consolas,monospace;font-size:12px}
   </div>
   <div class="bar" id="chips" style="padding:8px 16px"></div>
   <div class="main">
-    <svg id="svg"><defs>
+    <div class="stage"><svg id="svg"><defs>
       <marker id="ar" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0L10,5L0,10z" fill="var(--edge)"/></marker>
       <marker id="arh" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0L10,5L0,10z" fill="var(--hi)"/></marker>
-    </defs><g id="world"><g id="lanes"></g><g id="edges"></g><g id="nodes"></g></g></svg>
+    </defs><g id="world"><g id="lanes"></g><g id="edges"></g><g id="nodes"></g></g></svg><div class="heads" id="heads"></div></div>
     <div class="side" id="side"></div>
   </div>
   <div class="tl" id="timeline" hidden></div>
@@ -92,15 +95,17 @@ const DATA = JSON.parse(document.getElementById('data').textContent) || {nodes: 
 const NS = 'http://www.w3.org/2000/svg';
 const MAX_NODES = 300;
 const LANE_W = 230, ROW_H = 74;
-const LANES = ['You and projects', 'Decisions', 'Problems', 'Files, tools, mods', 'Preferences'];
-const LANE_OF = {PERSON: 0, PROJECT: 0, MOD: 0, DECISION: 1, CHECKPOINT: 1, PROBLEM: 2, CRASH_FAMILY: 2,
-  FILE: 3, TOOL: 3, CONCEPT: 3, ASSET: 3, CFG_SID: 3, NEXUS_MOD: 3, INPUT_ACTION: 3, KNOWLEDGE_TOPIC: 3, PREFERENCE: 4};
+const LANES = ['You', 'Projects', 'Decisions', 'Problems', 'Files, tools, mods', 'Preferences'];
+const OTHER_LANE = 4, MID = (LANES.length - 1) / 2 * LANE_W;  // MID: the centre of the columns, where Free gathers
+const LANE_OF = {PERSON: 0, PROJECT: 1, MOD: 1, DECISION: 2, CHECKPOINT: 2, PROBLEM: 3, CRASH_FAMILY: 3,
+  FILE: 4, TOOL: 4, CONCEPT: 4, ASSET: 4, CFG_SID: 4, NEXUS_MOD: 4, INPUT_ACTION: 4, KNOWLEDGE_TOPIC: 4, PREFERENCE: 5};
+const BIG = new Set(['PERSON', 'PROJECT', 'MOD']);  // drawn larger in Free, so they are easy to find
 const COLOR = {PROJECT: '#1D9E75', MOD: '#1D9E75', PERSON: '#378ADD', DECISION: '#7F77DD', CHECKPOINT: '#7F77DD',
   PROBLEM: '#D85A30', CRASH_FAMILY: '#D85A30', PREFERENCE: '#D4537E', FILE: '#888780', TOOL: '#888780',
   CONCEPT: '#BA7517', ASSET: '#888780', NEXUS_MOD: '#5F5E5A'};
 const EXTRA = ['#0F6E56', '#993556', '#3C3489', '#639922', '#185FA5'];
 const WHY = new Set(['because', 'fixed_by', 'decided', 'failed_because', 'tried']);
-const laneOf = t => LANE_OF[t] ?? 3;
+const laneOf = t => LANE_OF[t] ?? OTHER_LANE;
 const colorOf = t => COLOR[t] || EXTRA[[...t].reduce((a, c) => a + c.charCodeAt(0), 0) % EXTRA.length];
 const $ = id => document.getElementById(id);
 const el = (tag, attrs, parent) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); if (parent) parent.appendChild(e); return e; };
@@ -140,11 +145,11 @@ function setTab(t) {
 const keyOf = x => x.kind + ':' + x.ref;
 
 function setMode(m) { const was = mode; mode = m; $('mStruct').classList.toggle('on', m === 'struct'); $('mFree').classList.toggle('on', m === 'free'); $('lanes').style.display = m === 'struct' ? '' : 'none';
-  if (m === 'free' && was !== 'free') spiral(); autoFit = true; kick(1); }
+  if (m === 'free' && was !== 'free') spiral(); if (m !== was) drawShapes(); apply(); autoFit = true; kick(1); }
 // Free layout starts from a sunflower spiral, busiest nodes in the middle, instead of the lanes' grid it would
 // otherwise inherit (and barely leave).
 function spiral() {
-  const cx = 2 * LANE_W, cy = 0;
+  const cx = MID, cy = 0;
   [...nodes].sort((a, b) => b.deg - a.deg).forEach((n, i) => { const r = 70 * Math.sqrt(i), t = i * 2.39996;
     n.x = cx + r * Math.cos(t); n.y = cy + r * Math.sin(t); n.vx = n.vy = 0; });
 }
@@ -166,7 +171,7 @@ function rebuild() {
   const merged = new Map();
   es.forEach(e => { const k = e.s + '|' + e.p + '|' + e.t; if (!merged.has(k)) merged.set(k, {...e, origins: []}); merged.get(k).origins.push(e); });
   const old = byId;
-  const perLane = [0, 0, 0, 0, 0];
+  const perLane = LANES.map(() => 0);
   nodes = ids.map(id => { const n = all.get(id); const lane = laneOf(n.type); const prev = old.get(id);
     const row = perLane[lane]++;
     const lines = wrap(n.name);
@@ -176,7 +181,7 @@ function rebuild() {
   nodes.forEach(n => { n.fixed = n.type === 'PROBLEM' && edges.some(e => e.a === n && e.p === 'fixed_by'); });
   const rows = Math.max(...perLane, 4);
   $('counts').textContent = `${nodes.length} nodes · ${edges.length} facts` + (capped ? ` · ${capped} smaller nodes hidden` : '') + ` · built ${when(DATA.generated)}`;
-  if (mode === 'free') nodes.forEach(n => { if (!old.has(n.id)) { n.x = 2 * LANE_W + (Math.random() - .5) * 400; n.y = (Math.random() - .5) * 400; } });
+  if (mode === 'free') nodes.forEach(n => { if (!old.has(n.id)) { n.x = MID + (Math.random() - .5) * 400; n.y = (Math.random() - .5) * 400; } });
   drawChips(); drawLanes(rows); drawShapes(); side(); fit(true); autoFit = true; kick(1);
   if (!DATA.nodes.length) showEmpty();
 }
@@ -194,9 +199,11 @@ function drawLanes(rows) {
   const h = Math.max(rows, 4) * ROW_H + 80;
   LANES.forEach((name, i) => {
     el('rect', {x: i * LANE_W - LANE_W / 2 + 8, y: -60, width: LANE_W - 16, height: h, rx: 10, fill: i % 2 ? 'transparent' : 'var(--lane)'}, g);
-    const t = el('text', {x: i * LANE_W, y: -38, 'text-anchor': 'middle', 'font-size': 13, fill: 'var(--muted)'}, g); t.textContent = name;
   });
   g.style.display = mode === 'struct' ? '' : 'none';
+  const heads = $('heads'); heads.innerHTML = '';  // the titles live here, pinned to the top (apply() places them)
+  LANES.forEach(name => { const s = document.createElement('span'); s.textContent = name; heads.appendChild(s); });
+  apply();
 }
 
 function wrap(name) {
@@ -212,10 +219,12 @@ function drawShapes() {
   edges.forEach(e => { e.path = el('path', {fill: 'none', stroke: 'var(--edge)', 'stroke-width': 1.3, 'marker-end': 'url(#ar)'}, ge);
     e.label = el('text', {'font-size': 11, fill: 'var(--muted)', 'text-anchor': 'middle'}, ge); e.label.textContent = e.p; });
   nodes.forEach(n => {
-    const g = el('g', {style: 'cursor:pointer'}, gn); n.g = g; n.r = n.type === 'PROJECT' || n.type === 'MOD' ? 13 : 9 + Math.min(n.deg, 6) * 0.6;
+    const g = el('g', {style: 'cursor:pointer'}, gn); n.g = g; const big = mode === 'free' && BIG.has(n.type);
+    n.r = big ? 22 : n.type === 'PROJECT' || n.type === 'MOD' ? 13 : 9 + Math.min(n.deg, 6) * 0.6;
+    if (big) el('circle', {r: n.r + 5, fill: 'none', stroke: colorOf(n.type), 'stroke-width': 2, opacity: .45}, g);
     el('circle', {r: n.r, fill: colorOf(n.type), stroke: 'var(--bg)', 'stroke-width': 2.5}, g);
     if (n.fixed) { const c = el('text', {y: 4, 'text-anchor': 'middle', 'font-size': 11, fill: '#fff'}, g); c.textContent = '✓'; }
-    wrap(n.name).forEach((ln, i) => { const t = el('text', {y: n.r + 14 + i * 13, 'text-anchor': 'middle', 'font-size': 12, fill: 'var(--text)'}, g); t.textContent = ln; });
+    wrap(n.name).forEach((ln, i) => { const t = el('text', {y: n.r + (big ? 21 : 14) + i * 13, 'text-anchor': 'middle', 'font-size': big ? 13 : 12, 'font-weight': big ? 600 : 400, fill: 'var(--text)'}, g); t.textContent = ln; });
     const title = el('title', {}, g); title.textContent = n.description || n.name;
     g.addEventListener('mouseenter', () => { hover = n.id; paint(); });
     g.addEventListener('mouseleave', () => { hover = null; paint(); });
@@ -228,7 +237,7 @@ function drawShapes() {
 function kick(a) { alpha = Math.max(alpha, a); if (!running) { running = true; requestAnimationFrame(step); } }
 function step() {
   const struct = mode === 'struct';
-  const cx = 2 * LANE_W, cy = nodes.length ? nodes.reduce((s, n) => s + n.y, 0) / nodes.length : 0;
+  const cx = MID, cy = nodes.length ? nodes.reduce((s, n) => s + n.y, 0) / nodes.length : 0;
   for (let i = 0; i < nodes.length; i++) { const a = nodes[i];
     for (let j = i + 1; j < nodes.length; j++) { const b = nodes[j];
       let dx = b.x - a.x, dy = b.y - a.y; let d2 = dx * dx + dy * dy; if (d2 < 1) { dx = Math.random(); dy = Math.random(); d2 = 1; }
@@ -296,7 +305,7 @@ function side() {
     x.onclick = () => { only = null; side(); paint(); }; b.appendChild(x); box.appendChild(b); }
   if (!focus || !byId.has(focus)) {
     const p = document.createElement('div');
-    p.innerHTML = '<p>Hover a node to light up its links. Click it to see its facts here.</p><p class="muted">Drag nodes to move them, drag the background to pan, scroll to zoom. <b>Structured</b> keeps each type in its column; <b>Why chains</b> keeps only decisions and their reasons.</p>';
+    p.innerHTML = '<p>Hover a node to light up its links. Click it to see its facts here.</p><p class="muted">Drag nodes to move them, drag the background to pan. Scroll to move down the columns (Ctrl+scroll zooms); in Free, scroll zooms. <b>Structured</b> keeps each type in its column; <b>Why chains</b> keeps only decisions and their reasons.</p>';
     const db = document.createElement('p'); db.className = 'muted'; db.textContent = 'Graph: ' + (DATA.db || ''); p.appendChild(db);
     box.appendChild(p); return; }
   const n = byId.get(focus);
@@ -393,19 +402,32 @@ function showEmpty() {
 
 // ---- zoom, pan, drag
 const svg = $('svg'), world = $('world');
-function apply() { world.setAttribute('transform', `translate(${view.x},${view.y}) scale(${view.k})`); }
+function apply() {
+  world.setAttribute('transform', `translate(${view.x},${view.y}) scale(${view.k})`);
+  const heads = $('heads'); heads.style.display = mode === 'struct' ? '' : 'none';
+  [...heads.children].forEach((s, i) => { const w = (LANE_W - 16) * view.k;
+    s.style.left = (view.x + (i * LANE_W - LANE_W / 2 + 8) * view.k) + 'px'; s.style.width = w + 'px'; });
+}
 function toWorld(ev) { const r = svg.getBoundingClientRect(); return {x: (ev.clientX - r.left - view.x) / view.k, y: (ev.clientY - r.top - view.y) / view.k}; }
 function fit(quiet) {
   if (!nodes.length) { view.x = 60; view.y = 80; view.k = 1; apply(); return; }
   const r = svg.getBoundingClientRect();
   const xs = nodes.map(n => n.x), ys = nodes.map(n => n.y);
   let x0 = Math.min(...xs) - 120, x1 = Math.max(...xs) + 120, y0 = Math.min(...ys) - 90, y1 = Math.max(...ys) + 90;
-  if (mode === 'struct') { x0 = Math.min(x0, -LANE_W / 2); x1 = Math.max(x1, 4 * LANE_W + LANE_W / 2); }
+  if (mode === 'struct') { // fit the columns' width and start at their top: tall columns scroll under the pinned titles
+    x0 = -LANE_W / 2; x1 = (LANES.length - 1) * LANE_W + LANE_W / 2;
+    view.k = Math.max(0.45, Math.min(1.2, r.width / (x1 - x0)));
+    view.x = Math.max(0, (r.width - (x1 - x0) * view.k) / 2) - x0 * view.k; view.y = 36 + 60 * view.k;
+    apply(); if (!quiet) paint(); return;
+  }
   view.k = Math.max(0.25, Math.min(1.4, Math.min(r.width / (x1 - x0), r.height / (y1 - y0))));
   view.x = (r.width - (x1 - x0) * view.k) / 2 - x0 * view.k; view.y = (r.height - (y1 - y0) * view.k) / 2 - y0 * view.k;
   apply(); if (!quiet) paint();
 }
-svg.addEventListener('wheel', ev => { ev.preventDefault(); const r = svg.getBoundingClientRect(); const px = ev.clientX - r.left, py = ev.clientY - r.top;
+svg.addEventListener('wheel', ev => { ev.preventDefault();
+  // Structured: the wheel scrolls down the columns (Ctrl zooms); Free: the wheel zooms
+  if (mode === 'struct' && !ev.ctrlKey) { view.x -= ev.deltaX; view.y -= ev.deltaY; apply(); return; }
+  const r = svg.getBoundingClientRect(); const px = ev.clientX - r.left, py = ev.clientY - r.top;
   const k = Math.max(0.2, Math.min(3, view.k * Math.exp(-ev.deltaY * 0.0015)));
   view.x = px - (px - view.x) * k / view.k; view.y = py - (py - view.y) * k / view.k; view.k = k; apply(); paint(); }, {passive: false});
 let dragging = null, moved = false, pan = null;
