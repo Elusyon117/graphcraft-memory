@@ -11,6 +11,8 @@ import type { Clawd, Dupes, DupePair, Fixing, PaneFact, PaneView, Searched, Used
 //   session.compact queues it
 // - session.start: read other mods' feeder files (graph/feeders.py), then extract queued conversations in the
 //   background with a small model, and tell the user
+// - Read, Edit and Write calls: the paths a session works in; session.start learns each code file's outline
+//   (graph/files.py, no model): opening comment, exports and imports, as FILE facts
 // - session.start also reads the project's docs (graph/docs.py): graphcraft: front-matter in any .md at once, and
 //   CLAUDE.md and docs/*.md through the small model when they changed (setting learnDocs)
 // - /graph-memory, /graph-memory-undo, /graph-view: see what was learned, take a session back out, open the map
@@ -515,6 +517,8 @@ export const register: Register = (on, options) => {
   })
   // Per session: how many of the person's messages had been queued for reading when it last happened.
   const queuedAt = new Map<string, number>()
+  // Per session: the files read and edited (graph/files.py learns their outlines at the next session start).
+  const worked = new Map<string, Map<string, 'read' | 'edit'>>()
 
   on('prompt.submit', async ($, e, next) => {
     if (e.command || e.isMeta || !e.text.trim()) return next(e)
@@ -639,6 +643,14 @@ export const register: Register = (on, options) => {
       if (isLearningDocs) {
         await learnDocs($, model, isCapturing)
         await refreshView($)
+      }
+      // The code files earlier sessions worked in: their opening comment and exports, read by code (graph/files.py).
+      if (isLearningDocs) {
+        const learned = await runPy($, 'files.py', ['learn'], CAPTURE_TIMEOUT_MS)
+        if (Number(learned?.files ?? 0) > 0) {
+          $.ui.log(`graphcraft-memory: learned ${plural(Number(learned?.files), 'file')} worked in earlier`, { to: 'debug' })
+          await refreshView($)
+        }
       }
       // One thing saved twice under different types splits its facts: join them (graph/store.py merge_duplicates).
       const merged = await runPy($, 'store.py', ['merge'], CAPTURE_TIMEOUT_MS)
@@ -1060,10 +1072,33 @@ export const register: Register = (on, options) => {
     }
   })
 
+  // Which files the session reads and edits: only the path and which of the two, never the content.
+  on('tool.call', { tool: /^(Read|Edit|Write)$/ }, async ($, e, next) => {
+    const done = await next(e)
+    const path = (e as unknown as { file_path?: unknown }).file_path
+    if (isLearningDocs && typeof path === 'string' && path && !done.deny && !done.isError) {
+      const sid = await $.session.id()
+      const files = worked.get(sid) ?? new Map<string, 'read' | 'edit'>()
+      const abs = /^([a-zA-Z]:)?[\\/]/.test(path) ? path : `${slash(await $.session.cwd())}/${path}`
+      if (files.get(abs) !== 'edit') files.set(abs, e.tool === 'Read' ? 'read' : 'edit')
+      worked.set(sid, files)
+    }
+    return done
+  })
+
   // After each reply of the main conversation: rewrite this session's draft. The session is fully alive here, which
   // it no longer is at session.end (reading messages there fails: the REPL has already unmounted).
   on('turn.complete', async ($, e, next) => {
     const done = await next(e)
+    if (isLearningDocs && e.agentId === undefined) {
+      try {
+        const sid = await $.session.id()
+        const files = worked.get(sid)
+        if (files?.size) await $.fs.write(`${await dataDir($)}/worked/${safeId(sid)}.json`, JSON.stringify({ sessionId: sid, files: Object.fromEntries(files) }))
+      } catch (err) {
+        $.ui.log(`graphcraft-memory: could not save the worked files: ${String(err).slice(0, 200)}`, { to: 'debug' })
+      }
+    }
     if (isCapturing && e.agentId === undefined) {
       void (async () => {
         try {

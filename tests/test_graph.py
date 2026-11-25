@@ -162,6 +162,23 @@ class GraphTest(unittest.TestCase):
         self.assertLessEqual(out["facts"], recall.MAX_FACTS)
         self.assertLessEqual(len(out["context"]), recall.MAX_CHARS + 200)
 
+    def test_source_tags_stay_short(self):
+        self.assertEqual(recall.short_origin("session:9df5caa2-ee6c-4b1e-9f0a-123456789abc"), "s:9df5caa2")
+        self.assertEqual(recall.short_origin("file:c:/users/me/repo/src/templatekit.ts"), "file:templatekit.ts")
+        self.assertEqual(recall.short_origin("feeder:zonecraft:crashes"), "feeder:zonecraft:crashes")
+
+    def test_long_lines_run_out_of_budget_without_failing(self):
+        # Long names (file paths) fill the budget before the fact limit: the facts left over are simply not sent.
+        big = {"nodes": [{"name": "Campfires", "type": "MOD"}], "edges": []}
+        for i in range(30):
+            name = f"src/features/a/very/deep/folder/with/a/long/path/number/{i}/and/a/longer/file/name/{'x' * 60}.ts"
+            big["nodes"].append({"name": name, "type": "FILE"})
+            big["edges"].append({"source": name, "predicate": "about", "target": "Campfires"})
+        store.upsert(self.db, big, self.origin, VOCAB)
+        out = self.ask("Campfires")
+        self.assertGreater(out["facts"], 0)
+        self.assertLessEqual(len(out["context"]), recall.MAX_CHARS + 200)
+
     def test_no_database_answers_nothing_and_creates_nothing(self):
         missing = Path(self.tmp.name) / "none" / "graph.db"
         os.environ["GRAPHCRAFT_DB"] = str(missing)

@@ -55,7 +55,7 @@ file again changes nothing, so two PCs can swap files back and forth.
    node cannot crowd out the rest. Budget about 400 tokens.
 4. **Inject:** plain lines `A --[predicate]--> B (s:<first 8 of the session id>)` plus short descriptions, as
    `additionalContext`. A short tag is enough to trace a fact (`/graph-memory-undo` takes an id's first characters);
-   the full id cost ~25 tokens a line. Within one session (and round: the hook passes `<session>.<n>` and starts a new
+   the full id cost ~25 tokens a line; a file's tag is its name alone, `(file:templatekit.ts)`. Within one session (and round: the hook passes `<session>.<n>` and starts a new
    round after a compaction, or a rewind, seen as the conversation getting shorter),
    facts and descriptions already given are left out, since they are still in the conversation; a closing line says
    how many still apply. The pane still lists them, marked `again`. The list lives in `<data>/sent/`, kept 3 days.
@@ -133,6 +133,22 @@ doc's facts are retired with it. Only the doc's own record is retired; the same 
   document (no title, no retire) goes to the extraction model, 5 docs a session start at most; a failed call leaves
   the doc for the next one. With capture off, only front-matter is read.
 - Never the home folder or a drive root, so opening Claude in `~` reads nothing.
+
+### 6. Worked files (`graph/files.py`)
+So a later session knows which file holds what without re-reading the code to find its way (setting `learnDocs`).
+- **Noted** (no model): a `tool.call` hook on Read, Edit and Write keeps each path the session touched and whether
+  it was edited; after each reply it writes `<data>/worked/<session>.json`. Paths only, never content.
+- **Learned** at the next session start: in each repo (the nearest folder with `.git`, never home or a drive root)
+  where the session edited something, every code file it read or edited, edits first, 30 at most, 300 KB at most.
+  Reading alone is only looking, so a repo with no edit is skipped.
+- **Outline**, read by code: the opening comment's first sentence (140 characters) and the exported names (JS/TS
+  `export`, Python top-level `def`/`class` without `_`), 240 characters in all, secrets redacted. The node is the
+  repo-relative path (so two `model.ts` stay apart) with the file name as an alias; it is `part_of` the repo's
+  PROJECT and `depends_on` the other worked files it imports by a relative path.
+- A snapshot under origin `file:<path>`, like a doc: an unchanged file (content hash, `<data>/files.json`) is not
+  read again; a changed one replaces its description and retires the links it no longer has.
+- Not seen: files read through Bash (`cat`, `grep`), and what the session learned about a file beyond its outline
+  (that stays with capture).
 
 ## Settings (the user's tuning)
 

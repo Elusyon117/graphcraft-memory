@@ -1,6 +1,6 @@
 {
   "name": "graphcraft-memory",
-  "version": "0.16.2",
+  "version": "0.17.0",
   "description": "Knowledge-graph memory for Claude Code: facts from every session are linked into one graph per machine, and the relevant part is handed to Claude before each prompt. Other mods (like zonecraft) can feed it.",
   "author": {
     "name": "Elusyon117",
@@ -25,7 +25,7 @@
     "learnDocs": {
       "type": "boolean",
       "title": "Learn from project docs",
-      "description": "At session start, read the project's CLAUDE.md and docs/*.md when they changed (one small model call each), and the graphcraft: front-matter of any .md (no model). Facts a doc no longer says are retired. Off: docs are not read.",
+      "description": "At session start, read the project's CLAUDE.md and docs/*.md when they changed (one small model call each), and the graphcraft: front-matter of any .md (no model), plus the outline (opening comment, exports, imports) of code files earlier sessions worked in (no model). Facts a file no longer gives are retired. Off: none of these are read.",
       "default": true
     },
     "extractModel": {

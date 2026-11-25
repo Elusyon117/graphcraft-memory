@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <img alt="version" src="https://img.shields.io/badge/version-0.16.2-7F77DD">
+  <img alt="version" src="https://img.shields.io/badge/version-0.17.0-7F77DD">
   <img alt="Claude Code plugin" src="https://img.shields.io/badge/Claude%20Code-plugin-1D9E75">
   <img alt="Python standard library only" src="https://img.shields.io/badge/python-stdlib%20only-378ADD">
   <img alt="offline" src="https://img.shields.io/badge/memory-stays%20on%20your%20PC-888780">
@@ -77,6 +77,10 @@ in your conversation, and the pane, map and settings cost no tokens at all.
    ```
 
    A doc is a snapshot: what it stops saying is retired, so memory follows the docs as they change.
+5. **Files you worked in.** The paths Claude reads and edits are noted (never their content). At the next session
+   start, in each repo where something was edited, every code file worked in becomes a FILE fact: its opening
+   comment's first sentence, the names it exports and which of those files it imports. No model. The next session
+   that touches the area is told which file holds what, and can skip re-reading the code to find its way.
 
 The full design is in [docs/DESIGN.md](docs/DESIGN.md).
 
@@ -183,7 +187,7 @@ In the mod's settings; they apply from the next session.
 | Learn from conversations (`capture`) | on | Off: recall only. |
 | Learn during the conversation (`captureEvery`) | 8 | Also learn after every this many of your messages; 0 for only at the end. |
 | Extraction model (`extractModel`) | haiku | `sonnet` catches subtler facts and costs more. |
-| Learn from project docs (`learnDocs`) | on | Reads CLAUDE.md and docs/*.md when they change (one small model call each) and `graphcraft:` front-matter in any .md (free). Off: docs are not read. |
+| Learn from project docs (`learnDocs`) | on | Reads CLAUDE.md and docs/*.md when they change (one small model call each), `graphcraft:` front-matter in any .md (free), and the outline of code files sessions worked in (free). Off: none of these are read. |
 | Keep recall warm (`warmRecall`) | on | Off: Python starts fresh for each message (about 150 ms instead of 5). |
 | Map opens in (`mapLayout`) | Structured | Or Free. |
 

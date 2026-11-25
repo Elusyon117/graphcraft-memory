@@ -143,9 +143,12 @@ def walk(db, seeds: set, hops: int, later: dict | None = None) -> dict:
 
 def short_origin(origin: str) -> str:
     """'session:9df5caa2-ee6c-…' -> 's:9df5caa2': a full id costs ~25 tokens a line, and its first characters are
-    enough for /graph-memory-undo and the map. Feeders and files keep their names."""
+    enough for /graph-memory-undo and the map. A file keeps only its own name (its path can run to 30 tokens);
+    feeders keep theirs."""
     kind, _, ref = origin.partition(":")
-    return f"s:{ref[:8]}" if kind == "session" else origin
+    if kind == "session":
+        return f"s:{ref[:8]}"
+    return f"file:{ref.rsplit('/', 1)[-1]}" if kind == "file" else origin
 
 
 SENT_KEEP_S = 3 * 86400
@@ -343,7 +346,8 @@ def recall(prompt: str, cwd: str = "", hops: int | None = None, db=None, max_fac
         lines.append(line)
         new_keys.append(k)
         size += len(line) + 1
-    kept = [t for t in triples[:max_facts] if t["again"] or "f:" + "|".join((t["source_id"], t["predicate"], t["target_id"])) in new_keys]
+    # Facts after the budget ran out were never marked: they are neither again nor sent.
+    kept = [t for t in triples[:max_facts] if t.get("again") or "f:" + "|".join((t["source_id"], t["predicate"], t["target_id"])) in new_keys]
 
     names = {n for t in kept if not t["again"] for n in (t["source"], t["target"])}
     notes = []
